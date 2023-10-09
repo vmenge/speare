@@ -1,27 +1,39 @@
 use speare::*;
 
-struct IncreaseBy(u64);
+#[derive(Clone)]
+struct SayHi;
 
-#[derive(Default)]
-struct Counter {
-    num: u64,
-}
+struct Dog;
 
 #[async_trait]
-impl Process for Counter {
-    async fn on_init(&mut self, ctx: &Ctx<Self>) {
-        println!("Hello!");
-    }
-
-    async fn on_exit(&mut self, ctx: &Ctx<Self>) {
-        println!("Goodbye!");
+impl Process for Dog {
+    async fn subscriptions(&self, evt: &EventBus<Self>) {
+        evt.subscribe::<SayHi>().await;
     }
 }
 
 #[process]
-impl Counter {
+impl Dog {
     #[handler]
-    async fn spawn_another(&mut self, msg: IncreaseBy, ctx: &Ctx<Self>) -> Result<(), ()> {
+    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Result<(), ()> {
+        println!("WOOF!");
+        Ok(())
+    }
+}
+struct Cat;
+
+#[async_trait]
+impl Process for Cat {
+    async fn subscriptions(&self, evt: &EventBus<Self>) {
+        evt.subscribe::<SayHi>().await;
+    }
+}
+
+#[process]
+impl Cat {
+    #[handler]
+    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Result<(), ()> {
+        println!("MEOW!");
         Ok(())
     }
 }
@@ -29,8 +41,11 @@ impl Counter {
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    let counter_pid = node.spawn(Counter::default()).await;
-    node.tell(&counter_pid, IncreaseBy(1)).await;
-    node.tell(&counter_pid, IncreaseBy(2)).await;
-    let result = node.ask(&counter_pid, IncreaseBy(1)).await.unwrap_or(0);
+    node.spawn(Cat).await;
+    node.spawn(Dog).await;
+
+    node.publish(SayHi).await;
+
+    // "WOOF!"
+    // "MEOW!"
 }

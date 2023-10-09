@@ -3,7 +3,7 @@
 
 ## Your first `Process`
 `speare` revolves around the idea of `Processes`, which have their states isolated to their own `tokio::task`.
-Processes need to implement the `Process` trait. To handle messages you can use the `#[process]` and `#[handler]` attributes to handle messages.
+Processes need to implement the `Process` trait. To define message handlers you can use the `#[process]` and `#[handler]` attributes.
 
 ```rs
 use speare::*;
@@ -36,9 +36,11 @@ After defining your `Process`, you can now spawn it in a `Node` and send a fire 
 async fn main() {
     let node = Node::default();
     let counter_pid = node.spawn(Counter::default()).await;
+
     node.tell(&counter_pid, IncreaseBy(1)).await;
     node.tell(&counter_pid, IncreaseBy(2)).await;
     let result = node.ask(&counter_pid, IncreaseBy(1)).await.unwrap_or(0);
+
     assert_eq!(result, 4);
 }
 
@@ -59,7 +61,7 @@ impl Process for Counter {
 }
 ```
 
-If you need to send messages or spawn other processes from inside a `Process`, you can do so using the `Ctx<Self>` reference.
+If you need to send messages or spawn other processes from inside a `Process`, you can do so using the `Ctx<Self>` reference, which also has all functions availalbe on a `Node` instance.
 
 ```rs
 #[process]
@@ -70,4 +72,72 @@ impl Counter {
         Ok(())
     }
 }
+```
+
+To terminate a process you can use the `.exit()` function.
+
+```rs
+let node = Node::default();
+let counter_pid = node.spawn(Counter::default()).await;
+node.exit(&counter_pid).await;
+```
+
+## Pub / Sub
+Every `Process` that implements a `Handler` for a message `M`, can also manually subscribe to global publishes of that message, the only requirement being that the message must implement `Clone`.
+
+Here is a small example:
+```rs
+use speare::*;
+
+#[derive(Clone)]
+struct SayHi;
+
+struct Dog;
+
+#[async_trait]
+impl Process for Dog {
+    async fn subscriptions(&self, evt: &EventBus<Self>) {
+        evt.subscribe::<SayHi>().await;
+    }
+}
+
+#[process]
+impl Dog {
+    #[handler]
+    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Result<(), ()> {
+        println!("WOOF!");
+        Ok(())
+    }
+}
+
+struct Cat;
+
+#[async_trait]
+impl Process for Cat {
+    async fn subscriptions(&self, evt: &EventBus<Self>) {
+        evt.subscribe::<SayHi>().await;
+    }
+}
+
+#[process]
+impl Cat {
+    #[handler]
+    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Result<(), ()> {
+        println!("MEOW!");
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let node = Node::default();
+    node.spawn(Cat).await;
+    node.spawn(Dog).await;
+
+    node.publish(SayHi).await;
+
+    // "WOOF!"
+    // "MEOW!"
+}
+
 ```
