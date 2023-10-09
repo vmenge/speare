@@ -37,6 +37,7 @@ pub struct Node {
 }
 
 impl Node {
+    /// Spawns a `Process`.
     pub async fn spawn<P>(&self, proc: P) -> Pid<P>
     where
         P: Process + Send + Sync + 'static,
@@ -48,6 +49,8 @@ impl Node {
         pid
     }
 
+    /// Terminates a `Process`. Exit signal will be received after the current
+    /// (if any) message currently being handled by the `Process`.
     pub async fn exit<P>(&self, pid: &Pid<P>)
     where
         P: Process + Send + Sync + 'static,
@@ -55,6 +58,9 @@ impl Node {
         pid.exit_tx.try_send(true).ok();
     }
 
+    /// Publishes message to any `Process` that implements a `Handler` for it and that has subscribed to it.
+    ///
+    /// **Note:** Messsage must implement `Clone`, as it will be called to send the message to multiple processes.
     pub async fn publish<M>(&self, msg: M)
     where
         M: 'static + Send + Sync + Clone,
@@ -88,7 +94,7 @@ impl Node {
         }
     }
 
-    /// Fire and Forget. Might fail to reach actor if its mailbox is full or if it doesn't exist.
+    /// Sends a message to a `Process` without waiting for it to be handled.
     pub async fn tell<P, M>(&self, pid: &Pid<P>, msg: M)
     where
         P: 'static + Send + Sync + Process + Handler<M>,
@@ -99,6 +105,7 @@ impl Node {
         pid.runner_tx.try_send((handler, msg)).ok();
     }
 
+    /// Sends a message to a `Process`, waiting for it to be handled and for its respective response.
     pub async fn ask<P, M>(
         &self,
         pid: &Pid<P>,
@@ -239,6 +246,8 @@ where
         Self { node, pid }
     }
 
+    /// Subscribes an existing `Handler<M>` implementation to receive `Node`-wide
+    /// publishes of message `M`.
     pub async fn subscribe<M>(&self)
     where
         P: Process + Handler<M> + Send + Sync + 'static,

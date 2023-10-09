@@ -1,0 +1,17 @@
+[package]
+name = "speare_macro"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "macro to make speare crate easier to use"
+homepage = "https://github.com/vmenge/speare"
+repository = "https://github.com/vmenge/speare"
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0.38", features = ["full"] }
+quote = "1.0.33"
+proc-macro2 = "1.0.68"

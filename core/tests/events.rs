@@ -13,7 +13,7 @@ struct C;
 #[derive(Default, Debug)]
 struct Foo {
     a: u64,
-    b: u64,
+    b: u32,
     c: u64,
 }
 
@@ -39,10 +39,10 @@ impl Handler<A> for Foo {
 
 #[async_trait]
 impl Handler<B> for Foo {
-    type Reply = u64;
+    type Reply = u32;
     type Error = ();
 
-    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Result<u32, ()> {
         self.b += 1;
         Ok(self.b)
     }
