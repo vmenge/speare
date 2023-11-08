@@ -22,72 +22,74 @@ pub fn process(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-fn p(input: ItemImpl) -> Result<TokenStream, &'static str> {
+fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
+    let (impl_generics, _, where_clause) = input.generics.split_for_impl();
+
     let self_type = &input.self_ty;
 
     let mut additional_impls = Vec::new();
 
-    for impl_item in &input.items {
+    for impl_item in &mut input.items {
         if let ImplItem::Fn(method) = impl_item {
             let has_handler_attr = method
                 .attrs
                 .iter()
                 .any(|attr| attr.path().is_ident("handler"));
-
             if has_handler_attr {
                 let fn_name = &method.sig.ident;
                 let inputs = &method.sig.inputs;
                 let output = &method.sig.output;
 
                 let mut args_iter = inputs.iter();
-                let _self_arg = args_iter.next().ok_or("Expected 'self' as first arg")?;
+                args_iter.next().ok_or("Expected 'self' as first arg")?;
                 let msg_arg = args_iter.next().ok_or("Expected a message argument")?;
 
                 let msg_type = if let FnArg::Typed(arg) = msg_arg {
-                    &arg.ty
+                    &(*arg.ty)
                 } else {
                     return Err("Expected a typed argument for the message");
                 };
 
-                let t = match output {
-                    ReturnType::Type(_, ref t) => t,
+                let output_type = match output {
+                    ReturnType::Type(_, type_) => type_,
                     _ => return Err("Expected Result type for return value"),
                 };
 
-                let type_path = match t.as_ref() {
-                    Type::Path(x) => x,
-                    _ => return Err("Invalid return type"),
+                let segment = match output_type.as_ref() {
+                    Type::Path(type_path) => type_path
+                        .path
+                        .segments
+                        .last()
+                        .ok_or("Expected Result type for return value")?,
+                    _ => return Err("Expected Result type for return value"),
                 };
 
-                let path = type_path
-                    .path
-                    .segments
-                    .last()
-                    .ok_or("Invalid return type")?;
-
-                if path.ident != "Result" {
+                if segment.ident != "Result" {
                     return Err("Expected Result type in handler return value");
                 }
 
-                let angle_args = match &path.arguments {
-                    syn::PathArguments::AngleBracketed(angle) => &angle.args,
+                let angle_args = match &segment.arguments {
+                    syn::PathArguments::AngleBracketed(angle) => angle,
                     _ => return Err("Result return type must have its generics declared."),
                 };
 
-                let mut arg_iter = angle_args.iter();
-                let ok_type = arg_iter.next().ok_or("Expected Ok type")?;
-                let err_type = arg_iter.next().ok_or("Expected Err type")?;
+                let args = &angle_args.args;
 
-                let (ok_type, err_type) = (quote!(#ok_type), quote!(#err_type));
+                if args.len() != 2 {
+                    return Err("Expected two generics for Result type, Ok type and Err type");
+                }
+
+                let ok_type = &args[0];
+                let err_type = &args[1];
 
                 additional_impls.push(quote! {
                     #[async_trait]
-                    impl Handler<#msg_type> for #self_type {
+                    impl #impl_generics Handler<#msg_type> for #self_type #where_clause {
                         type Reply = #ok_type;
                         type Error = #err_type;
 
                         async fn handle(&mut self, msg: #msg_type, ctx: &Ctx<Self>) -> Result<Self::Reply, Self::Error> {
-                                self.#fn_name(msg, ctx).await
+                            self.#fn_name(msg, ctx).await
                         }
                     }
                 });
