@@ -13,7 +13,7 @@ use tokio::{
     task::{self},
 };
 
-use crate::process::{Handler, Pid, ProcErr, Process};
+use crate::process::{AskErr, Handler, Pid, Process};
 
 type Unknown = Box<dyn Any + Sync + Send + 'static>;
 type AnyProc = Unknown;
@@ -110,7 +110,7 @@ impl Node {
         &self,
         pid: &Pid<P>,
         msg: M,
-    ) -> Result<<P as Handler<M>>::Reply, ProcErr<P, M>>
+    ) -> Result<<P as Handler<M>>::Ok, AskErr<P, M>>
     where
         P: 'static + Send + Sync + Process + Handler<M>,
         M: 'static + Send + Sync,
@@ -120,13 +120,14 @@ impl Node {
         let msg = Box::new(msg);
 
         if pid.runner_tx.send_async((handler, msg)).await.is_err() {
-            return Err(ProcErr::Exited);
+            return Err(AskErr::Exited);
         }
 
         match rx.recv_async().await {
-            Err(_) => Err(ProcErr::Exited),
-            Ok(Err(e)) => Err(ProcErr::Handler(e)),
-            Ok(Ok(v)) => Ok(v),
+            Err(_) => Err(AskErr::NoReply),
+            Ok(Err(e)) => Err(AskErr::Handler(e)),
+            Ok(Ok(Some(v))) => Ok(v),
+            Ok(Ok(None)) => unreachable!(),
         }
     }
 
@@ -172,24 +173,34 @@ impl Node {
     }
 }
 
-type Reply<P, M> = Result<<P as Handler<M>>::Reply, <P as Handler<M>>::Error>;
+type Response<P, M> = Result<Option<<P as Handler<M>>::Ok>, <P as Handler<M>>::Err>;
 
-fn message_handler<P, M>(responder: Option<Sender<Reply<P, M>>>) -> ProcessRunner
+fn message_handler<P, M>(responder: Option<Sender<Response<P, M>>>) -> ProcessRunner
 where
     P: 'static + Send + Sync + Process + Handler<M>,
     M: 'static + Send + Sync,
 {
     Arc::new(move |actor, ctx, msg| {
         let mut proc = actor.downcast::<P>().unwrap();
-        let ctx = ctx.downcast::<Ctx<P>>().unwrap();
+        let mut ctx = ctx.downcast::<Ctx<P>>().unwrap();
         let msg = msg.downcast::<M>().unwrap();
         let responder = responder.clone();
 
         Box::pin(async move {
+            if let Some(responder) = &responder {
+                ctx.responder = Some(Box::new(responder.clone()));
+            }
+
             let res = proc.handle(*msg, &ctx).await;
 
             if let Some(responder) = &responder {
-                responder.send(res).ok();
+                match res {
+                    Ok(None) => (),
+
+                    _ => {
+                        responder.send(res).ok();
+                    }
+                }
             }
 
             (proc as Unknown, ctx as Unknown)
@@ -203,6 +214,7 @@ where
 {
     node: Node,
     pid: Pid<P>,
+    pub(crate) responder: Option<Unknown>,
 }
 
 impl<P> Deref for Ctx<P>
@@ -221,12 +233,53 @@ where
     P: Process + Send + Sync + 'static,
 {
     fn new(node: Node, pid: Pid<P>) -> Self {
-        Self { node, pid }
+        Self {
+            node,
+            pid,
+            responder: None,
+        }
     }
 
     /// The `Pid` of the current `Process`
     pub fn this(&self) -> &Pid<P> {
         &self.pid
+    }
+}
+
+impl<P> Ctx<P>
+where
+    P: 'static + Send + Sync + Process,
+{
+    pub fn responder<M>(&self) -> Option<Responder<P, M>>
+    where
+        P: 'static + Send + Sync + Process + Handler<M>,
+        M: 'static + Send + Sync,
+    {
+        let responder_as_any = self.responder.as_ref()?.as_ref();
+        let responder = responder_as_any.downcast_ref::<Sender<Response<P, M>>>()?;
+
+        Some(Responder {
+            responder: responder.clone(),
+        })
+    }
+}
+
+pub struct Responder<P, M>
+where
+    P: 'static + Send + Sync + Process + Handler<M>,
+    M: 'static + Send + Sync,
+{
+    responder: Sender<Response<P, M>>,
+}
+
+impl<P, M> Responder<P, M>
+where
+    P: 'static + Send + Sync + Process + Handler<M>,
+    M: 'static + Send + Sync,
+{
+    pub fn reply(&self, msg: Result<P::Ok, P::Err>) {
+        let msg = msg.map(Some);
+        self.responder.send(msg).ok();
     }
 }
 

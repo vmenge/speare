@@ -1,8 +1,15 @@
+use std::time::Duration;
+
 use speare::*;
+use tokio::{task, time};
 #[derive(Clone)]
 struct SayHi;
+struct GiveBone;
 
-struct Dog;
+#[derive(Default)]
+struct Dog {
+    hi_responder: Option<Responder<Self, SayHi>>,
+}
 
 #[async_trait]
 impl Process for Dog {
@@ -14,9 +21,19 @@ impl Process for Dog {
 #[process]
 impl Dog {
     #[handler]
-    async fn hi(&mut self, _msg: SayHi, _ctx: &Ctx<Self>) -> Result<(), ()> {
-        println!("WOOF!");
-        Ok(())
+    async fn hi(&mut self, _msg: SayHi, ctx: &Ctx<Self>) -> Reply<String, ()> {
+        self.hi_responder = ctx.responder::<SayHi>();
+
+        noreply()
+    }
+
+    #[handler]
+    async fn bruh(&mut self, _msg: GiveBone, _ctx: &Ctx<Self>) -> Reply<(), ()> {
+        if let Some(x) = &self.hi_responder {
+            x.reply(Ok("Hello".to_string()))
+        }
+
+        reply(())
     }
 }
 struct Cat;
@@ -31,9 +48,9 @@ impl Process for Cat {
 #[process]
 impl Cat {
     #[handler]
-    async fn hi(&mut self, _msg: SayHi, _ctx: &Ctx<Self>) -> Result<(), ()> {
+    async fn hi(&mut self, _msg: SayHi, _ctx: &Ctx<Self>) -> Reply<(), ()> {
         println!("MEOW!");
-        Ok(())
+        reply(())
     }
 }
 
@@ -55,20 +72,29 @@ where
     T: Sync + Send,
 {
     #[handler]
-    async fn hi(&mut self, _msg: SayHi, _ctx: &Ctx<Self>) -> Result<(), ()> {
+    async fn hi(&mut self, _msg: SayHi, _ctx: &Ctx<Self>) -> Reply<(), ()> {
         println!("Hi im container!");
-        Ok(())
+        reply(())
     }
 }
 
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    node.spawn(Cat).await;
-    node.spawn(Dog).await;
-    node.spawn(Container(0)).await;
+    let dog_pid = node.spawn(Dog::default()).await;
 
-    node.publish(SayHi).await;
+    let node_clone = node.clone();
+    let dog_pid_clone = dog_pid.clone();
+    task::spawn(async move {
+        let res = node_clone.ask(&dog_pid_clone, SayHi).await;
+        if let Ok(res) = res {
+            println!("got response! {}", res);
+        }
+    });
+
+    time::sleep(Duration::from_millis(10)).await;
+    node.tell(&dog_pid, GiveBone).await;
+    time::sleep(Duration::from_millis(500)).await;
 
     // "WOOF!"
     // "MEOW!"

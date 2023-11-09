@@ -35,6 +35,7 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
                 .attrs
                 .iter()
                 .any(|attr| attr.path().is_ident("handler"));
+
             if has_handler_attr {
                 let fn_name = &method.sig.ident;
                 let inputs = &method.sig.inputs;
@@ -64,8 +65,8 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
                     _ => return Err("Expected Result type for return value"),
                 };
 
-                if segment.ident != "Result" {
-                    return Err("Expected Result type in handler return value");
+                if segment.ident != "Reply" {
+                    return Err("Expected Reply type in handler return value");
                 }
 
                 let angle_args = match &segment.arguments {
@@ -76,7 +77,7 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
                 let args = &angle_args.args;
 
                 if args.len() != 2 {
-                    return Err("Expected two generics for Result type, Ok type and Err type");
+                    return Err("Expected two generics for Reply type, Ok type and Err type");
                 }
 
                 let ok_type = &args[0];
@@ -85,10 +86,10 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
                 additional_impls.push(quote! {
                     #[async_trait]
                     impl #impl_generics Handler<#msg_type> for #self_type #where_clause {
-                        type Reply = #ok_type;
-                        type Error = #err_type;
+                        type Ok = #ok_type;
+                        type Err = #err_type;
 
-                        async fn handle(&mut self, msg: #msg_type, ctx: &Ctx<Self>) -> Result<Self::Reply, Self::Error> {
+                        async fn handle(&mut self, msg: #msg_type, ctx: &Ctx<Self>) -> Reply<Self::Ok, Self::Err> {
                             self.#fn_name(msg, ctx).await
                         }
                     }

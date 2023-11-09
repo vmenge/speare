@@ -55,18 +55,33 @@ pub trait Handler<Message>: Process + Sized + Send + Sync
 where
     Message: 'static + Send + Sync,
 {
-    type Reply: Send + Sync;
-    type Error: Send + Sync;
+    type Ok: Send + Sync;
+    type Err: Send + Sync;
 
-    async fn handle(&mut self, msg: Message, ctx: &Ctx<Self>) -> Result<Self::Reply, Self::Error>;
+    async fn handle(
+        &mut self,
+        msg: Message,
+        ctx: &Ctx<Self>,
+    ) -> Result<Option<Self::Ok>, Self::Err>;
 }
 
 #[derive(Debug)]
-pub enum ProcErr<P, M>
+pub enum AskErr<P, M>
 where
     P: Process + Handler<M>,
     M: 'static + Send + Sync,
 {
     Exited,
-    Handler(P::Error),
+    NoReply,
+    Handler(P::Err),
 }
+
+pub fn reply<T, E>(item: T) -> Result<Option<T>, E> {
+    Ok(Some(item))
+}
+
+pub fn noreply<T, E>() -> Result<Option<T>, E> {
+    Ok(None)
+}
+
+pub type Reply<T, E> = core::result::Result<Option<T>, E>;

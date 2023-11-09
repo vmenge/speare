@@ -1,5 +1,4 @@
-use async_trait::async_trait;
-use speare::{Ctx, EventBus, Handler, Node, Process};
+use speare::*;
 
 #[derive(Clone, Debug)]
 struct A;
@@ -28,34 +27,34 @@ impl Process for Foo {
 
 #[async_trait]
 impl Handler<A> for Foo {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: A, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: A, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.a += 1;
-        Ok(self.a)
+        reply(self.a)
     }
 }
 
 #[async_trait]
 impl Handler<B> for Foo {
-    type Reply = u32;
-    type Error = ();
+    type Ok = u32;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Result<u32, ()> {
+    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Reply<u32, ()> {
         self.b += 1;
-        Ok(self.b)
+        reply(self.b)
     }
 }
 
 #[async_trait]
 impl Handler<C> for Foo {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: C, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: C, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.c += 1;
-        Ok(self.c)
+        reply(self.c)
     }
 }
 
@@ -68,34 +67,34 @@ struct Bar {
 
 #[async_trait]
 impl Handler<A> for Bar {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: A, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: A, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.a += 1;
-        Ok(self.a)
+        reply(self.a)
     }
 }
 
 #[async_trait]
 impl Handler<B> for Bar {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.b += 1;
-        Ok(self.b)
+        reply(self.b)
     }
 }
 
 #[async_trait]
 impl Handler<C> for Bar {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: C, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: C, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.c += 1;
-        Ok(self.c)
+        reply(self.c)
     }
 }
 

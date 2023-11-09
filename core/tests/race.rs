@@ -16,21 +16,21 @@ impl Process for Bag {}
 #[process]
 impl Bag {
     #[handler]
-    async fn wait(&mut self, msg: Wait, _: &Ctx<Self>) -> Result<(), ()> {
+    async fn wait(&mut self, msg: Wait, _: &Ctx<Self>) -> Reply<(), ()> {
         time::sleep(Duration::from_millis(100)).await;
         self.msgs.push(msg.0);
-        Ok(())
+        reply(())
     }
 
     #[handler]
-    async fn immediate(&mut self, msg: Immediate, _: &Ctx<Self>) -> Result<(), ()> {
+    async fn immediate(&mut self, msg: Immediate, _: &Ctx<Self>) -> Reply<(), ()> {
         self.msgs.push(msg.0);
-        Ok(())
+        reply(())
     }
 
     #[handler]
-    async fn get(&mut self, _: Get, _: &Ctx<Self>) -> Result<Vec<u8>, ()> {
-        Ok(self.msgs.clone())
+    async fn get(&mut self, _: Get, _: &Ctx<Self>) -> Reply<Vec<u8>, ()> {
+        reply(self.msgs.clone())
     }
 }
 

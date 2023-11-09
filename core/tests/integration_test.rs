@@ -1,8 +1,7 @@
 use std::time::Duration;
 
-use async_trait::async_trait;
 use flume::Sender;
-use speare::{Ctx, EventBus, Handler, Node, Process};
+use speare::*;
 use tokio::time;
 
 #[derive(Clone, Debug)]
@@ -32,23 +31,23 @@ impl Process for Counter {
 
 #[async_trait]
 impl Handler<IncCount> for Counter {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: IncCount, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: IncCount, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.count += 1;
-        Ok(self.count)
+        reply(self.count)
     }
 }
 
 #[async_trait]
 impl Handler<DoubleCount> for Counter {
-    type Reply = u64;
-    type Error = ();
+    type Ok = u64;
+    type Err = ();
 
-    async fn handle(&mut self, _msg: DoubleCount, _ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn handle(&mut self, _msg: DoubleCount, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.count *= 2;
-        Ok(self.count)
+        reply(self.count)
     }
 }
 

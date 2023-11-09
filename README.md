@@ -20,9 +20,9 @@ impl Process for Counter {}
 #[process]
 impl Counter {
     #[handler]
-    async fn increase(&mut self, msg: IncreaseBy, ctx: &Ctx<Self>) -> Result<u64, ()> {
+    async fn increase(&mut self, msg: IncreaseBy, ctx: &Ctx<Self>) -> Reply<u64, ()> {
         self.num += msg.0;
-        Ok(self.num)
+        reply(self.num)
     }
 }
 ```
@@ -67,9 +67,9 @@ If you need to send messages or spawn other processes from inside a `Process`, y
 #[process]
 impl Counter {
     #[handler]
-    async fn spawn_another(&mut self, msg: SpawnAnother, ctx: &Ctx<Self>) -> Result<(), ()> {
+    async fn spawn_another(&mut self, msg: SpawnAnother, ctx: &Ctx<Self>) -> Reply<(), ()> {
         ctx.spawn(MyOtherProc::default()).await;
-        Ok(())
+        reply(())
     }
 }
 ```
@@ -80,6 +80,59 @@ To terminate a process you can use the `.exit()` function.
 let node = Node::default();
 let counter_pid = node.spawn(Counter::default()).await;
 node.exit(&counter_pid).await;
+```
+
+## The `Reply` type
+Every `#[handler]` must return a `Reply<T,E>`, which is just an alias for `Result<Option<T>, E>`. You can still use `?` to early return errors from your `#[handler]` functions. There are two helper functions for creating Replies:
+
+```rust
+pub fn reply<T, E>(item: T) -> Result<Option<T>, E> {
+    Ok(Some(item))
+}
+
+pub fn noreply<T, E>() -> Result<Option<T>, E> {
+    Ok(None)
+}
+```
+
+`noreply()` will make it impossible for `.ask()` to succeed on that specific handler, unless an instance of a `Responder` is stored somewhere.
+
+## Deferring Replies
+To avoid replying immediately or even in the same `#[handler]` that receives a message, you can use `noreply()` on the original `#[handler]`, and store the responder for that message to send the response later. If the `Responder` is not stored and `noreply()` is used, calling `.ask()` on that `#[handler]` will always fail. In the example below you can see `Dog` will only reply to `SayHi` once it is given a bone with the `GiveBone` message.
+
+```rust
+use speare::*;
+
+struct SayHi;
+struct GiveBone;
+
+#[derive(Default)]
+struct Dog {
+    hi_responder: Option<Responder<Self, SayHi>>,
+}
+
+impl Process for Dog {}
+
+#[process]
+impl Dog {
+    // the hi Handler specifies that it returns a String as a response,
+    // thus when we call it on get_bone, the Reply itself must be a String.
+    #[handler]
+    async fn hi(&mut self, _msg: SayHi, ctx: &Ctx<Self>) -> Reply<String, ()> {
+        self.hi_responder = ctx.responder::<SayHi>();
+
+        noreply()
+    }
+
+    #[handler]
+    async fn get_bone(&mut self, _msg: GiveBone, _ctx: &Ctx<Self>) -> Reply<(), ()> {
+        if let Some(responder) = &self.hi_responder {
+            responder.reply(Ok("Hello".to_string()))
+        }
+
+        noreply() // this could also be a reply(()), but noreply() conveys meaning better
+    }
+}
 ```
 
 ## Pub / Sub
@@ -104,9 +157,9 @@ impl Process for Dog {
 #[process]
 impl Dog {
     #[handler]
-    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Result<(), ()> {
+    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Reply<(), ()> {
         println!("WOOF!");
-        Ok(())
+        reply(())
     }
 }
 
@@ -122,9 +175,9 @@ impl Process for Cat {
 #[process]
 impl Cat {
     #[handler]
-    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Result<(), ()> {
+    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Reply<(), ()> {
         println!("MEOW!");
-        Ok(())
+        reply(())
     }
 }
 
