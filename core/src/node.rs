@@ -96,6 +96,14 @@ impl Node {
         }
     }
 
+    /// Returns `true` if the `Process` for the given `Pid<P>` is still running.
+    pub fn is_alive<P>(&self, pid: &Pid<P>) -> bool
+    where
+        P: 'static + Send + Sync + Process,
+    {
+        !pid.runner_tx.is_disconnected()
+    }
+
     /// Sends a message to a `Process` without waiting for it to be handled.
     pub async fn tell<P, M>(&self, pid: &Pid<P>, msg: M)
     where
