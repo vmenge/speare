@@ -14,6 +14,15 @@ where
     phantom: PhantomData<P>,
 }
 
+impl<P> PartialEq for Pid<P>
+where
+    P: Process,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
 impl<P> Clone for Pid<P>
 where
     P: Process,

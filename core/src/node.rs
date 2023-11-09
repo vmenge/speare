@@ -5,12 +5,14 @@ use std::{
     ops::Deref,
     pin::Pin,
     sync::Arc,
+    time::Duration,
 };
 
 use flume::{Sender, TrySendError};
 use tokio::{
     sync::Mutex,
     task::{self},
+    time,
 };
 
 use crate::process::{AskErr, Handler, Pid, Process};
@@ -105,8 +107,23 @@ impl Node {
         pid.runner_tx.try_send((handler, msg)).ok();
     }
 
+    /// Sends a message to a `Process` after the specified `Duration`.
+    pub async fn tell_in<P, M>(&self, pid: &Pid<P>, msg: M, delay: Duration)
+    where
+        P: 'static + Send + Sync + Process + Handler<M>,
+        M: 'static + Send + Sync,
+    {
+        let node = self.clone();
+        let pid = pid.clone();
+        task::spawn(async move {
+            time::sleep(delay).await;
+            node.tell(&pid, msg).await;
+        });
+    }
+
     /// Sends a message to a `Process`, waiting for it to be handled and for its respective response.
     pub async fn ask<P, M>(
+        // TODO: add default timeout, and make it configureable
         &self,
         pid: &Pid<P>,
         msg: M,
