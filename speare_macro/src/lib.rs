@@ -2,7 +2,10 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, FnArg, ImplItem, ItemImpl, ReturnType, Type};
+use syn::{
+    parse::{Parse, ParseStream},
+    parse_macro_input, parse_quote, FnArg, Ident, ImplItem, ItemImpl, ReturnType, Token, Type,
+};
 
 #[proc_macro_attribute]
 pub fn subscriptions(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -24,17 +27,75 @@ pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+struct ProcessArgs {
+    error_type: Option<syn::Type>,
+}
+
+impl Parse for ProcessArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut error_type = None;
+
+        if !input.is_empty() {
+            let error_kw: Ident = input.parse()?;
+            if error_kw == "Error" {
+                input.parse::<Token![=]>()?;
+                let lookahead = input.lookahead1();
+                if lookahead.peek(syn::token::Lt) || lookahead.peek(syn::Ident) {
+                    error_type = Some(input.parse()?);
+                } else {
+                    return Err(lookahead.error());
+                }
+            } else {
+                return Err(syn::Error::new_spanned(
+                    error_kw,
+                    "Expected 'Error' keyword",
+                ));
+            }
+        }
+
+        Ok(ProcessArgs { error_type })
+    }
+}
+
 #[proc_macro_attribute]
-pub fn process(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn process(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemImpl);
 
-    match p(input.clone()) {
+    let (impl_generics, _, where_clause) = input.generics.split_for_impl();
+    let self_type = &input.self_ty;
+
+    let args = parse_macro_input!(attr as ProcessArgs);
+    let error_type = args.error_type.unwrap_or_else(|| parse_quote! { () });
+
+    let on_init_impl = process_on_init(&input);
+    let on_exit_impl = process_on_exit(&input);
+    let subscriptions = process_subscriptions(&input);
+
+    let handlers_code = match p(input.clone()) {
         Ok(v) => v,
         Err(e) => {
-            let error = syn::Error::new_spanned(input, e);
+            let error = syn::Error::new_spanned(input.clone(), e);
             error.to_compile_error().into()
         }
-    }
+    };
+
+    let process_impl = quote! {
+        #[async_trait]
+        impl #impl_generics Process for #self_type #where_clause {
+            type Error = #error_type;
+
+            #on_init_impl
+            #on_exit_impl
+            #subscriptions
+        }
+    };
+
+    let mut token_stream = TokenStream::from(process_impl);
+    token_stream.extend(handlers_code);
+
+    println!("{}", token_stream);
+
+    token_stream
 }
 
 fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
@@ -158,4 +219,70 @@ fn matches_self(arg: &syn::GenericArgument) -> bool {
     } else {
         false
     }
+}
+
+fn process_on_init(input: &ItemImpl) -> Option<proc_macro2::TokenStream> {
+    input.items.iter().find_map(|impl_item| {
+        if let ImplItem::Fn(method) = impl_item {
+            if method
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("on_init"))
+            {
+                let fn_name = &method.sig.ident;
+
+                return Some(quote! {
+                    async fn on_init(&mut self, ctx: &Ctx<Self>) {
+                        self.#fn_name(ctx).await;
+                    }
+                });
+            }
+        }
+
+        None
+    })
+}
+
+fn process_on_exit(input: &ItemImpl) -> Option<proc_macro2::TokenStream> {
+    input.items.iter().find_map(|impl_item| {
+        if let ImplItem::Fn(method) = impl_item {
+            if method
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("on_exit"))
+            {
+                let fn_name = &method.sig.ident;
+
+                return Some(quote! {
+                    async fn on_exit(&mut self, ctx: &Ctx<Self>) {
+                        self.#fn_name(ctx).await;
+                    }
+                });
+            }
+        }
+
+        None
+    })
+}
+
+fn process_subscriptions(input: &ItemImpl) -> Option<proc_macro2::TokenStream> {
+    input.items.iter().find_map(|impl_item| {
+        if let ImplItem::Fn(method) = impl_item {
+            if method
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("subscriptions"))
+            {
+                let fn_name = &method.sig.ident;
+
+                return Some(quote! {
+                    async fn subscriptions(&self, evt: &EventBus<Self>) {
+                        self.#fn_name(evt).await;
+                    }
+                });
+            }
+        }
+
+        None
+    })
 }

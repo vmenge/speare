@@ -11,10 +11,6 @@ struct Dog {
     hi_responder: Option<Responder<Self, SayHi>>,
 }
 
-impl Process for Dog {
-    type Error = ();
-}
-
 #[process]
 impl Dog {
     #[handler]

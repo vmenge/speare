@@ -3,24 +3,14 @@ use std::time::Duration;
 
 struct MyProc;
 
-impl Process for MyProc {
-    type Error = String;
-}
+#[process(Error = String)]
+impl MyProc {}
 
 struct GetErr;
 
 struct Supervisor {
     child: Pid<MyProc>,
     err: Option<String>,
-}
-
-#[async_trait]
-impl Process for Supervisor {
-    type Error = ();
-
-    async fn on_init(&mut self, ctx: &Ctx<Self>) {
-        ctx.monitor(&self.child);
-    }
 }
 
 #[process]
@@ -30,6 +20,11 @@ impl Supervisor {
             child: child.clone(),
             err: None,
         }
+    }
+
+    #[on_init]
+    async fn on_init(&mut self, ctx: &Ctx<Self>) {
+        ctx.monitor(&self.child);
     }
 
     #[handler]
@@ -56,15 +51,6 @@ struct Supervisor2 {
     err: Option<String>,
 }
 
-#[async_trait]
-impl Process for Supervisor2 {
-    type Error = ();
-
-    async fn on_init(&mut self, ctx: &Ctx<Self>) {
-        ctx.monitor(&self.child);
-    }
-}
-
 #[process]
 impl Supervisor2 {
     pub fn new(child: &Pid<MyProc>) -> Self {
@@ -72,6 +58,11 @@ impl Supervisor2 {
             child: child.clone(),
             err: None,
         }
+    }
+
+    #[on_init]
+    async fn on_init(&mut self, ctx: &Ctx<Self>) {
+        ctx.monitor(&self.child);
     }
 
     #[handler]

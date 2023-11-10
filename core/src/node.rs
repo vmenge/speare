@@ -263,7 +263,7 @@ where
 
 pub struct Ctx<P>
 where
-    P: Process + Send + Sync + 'static,
+    P: Send + Sync + 'static,
 {
     node: Node,
     pid: Pid<P>,
@@ -272,7 +272,7 @@ where
 
 impl<P> Deref for Ctx<P>
 where
-    P: Process + Send + Sync + 'static,
+    P: Send + Sync + 'static,
 {
     type Target = Node;
 
@@ -283,7 +283,7 @@ where
 
 impl<P> Ctx<P>
 where
-    P: Process + Send + Sync + 'static,
+    P: Send + Sync + 'static,
 {
     fn new(node: Node, pid: Pid<P>) -> Self {
         Self {
@@ -301,7 +301,7 @@ where
 
 impl<P> Ctx<P>
 where
-    P: 'static + Send + Sync + Process,
+    P: 'static + Send + Sync,
 {
     pub fn monitor<Proc>(&self, pid: &Pid<Proc>)
     where
@@ -328,11 +328,11 @@ where
 
 impl<P> Ctx<P>
 where
-    P: 'static + Send + Sync + Process,
+    P: 'static + Send + Sync,
 {
     pub fn responder<M>(&self) -> Option<Responder<P, M>>
     where
-        P: 'static + Send + Sync + Process + Handler<M>,
+        P: 'static + Send + Sync + Handler<M>,
         M: 'static + Send + Sync,
     {
         let responder_as_any = self.responder.as_ref()?.as_ref();
@@ -354,7 +354,7 @@ where
 
 impl<P, M> Responder<P, M>
 where
-    P: 'static + Send + Sync + Process + Handler<M>,
+    P: 'static + Send + Sync + Handler<M>,
     M: 'static + Send + Sync,
 {
     pub fn reply(&self, msg: Result<P::Ok, P::Err>) {
@@ -365,7 +365,7 @@ where
 
 pub struct EventBus<P>
 where
-    P: Process + Send + Sync + 'static,
+    P: Send + Sync + 'static,
 {
     node: Node,
     pid: Pid<P>,
@@ -373,7 +373,7 @@ where
 
 impl<P> EventBus<P>
 where
-    P: Process + Send + Sync + 'static,
+    P: Send + Sync + 'static,
 {
     fn new(node: Node, pid: Pid<P>) -> Self {
         Self { node, pid }
@@ -383,7 +383,7 @@ where
     /// publishes of message `M`.
     pub async fn subscribe<M>(&self)
     where
-        P: Process + Handler<M> + Send + Sync + 'static,
+        P: Handler<M> + Send + Sync + 'static,
         M: 'static + Send + Sync + Clone,
     {
         let mut subscribers = self.node.subscribers.lock().await;

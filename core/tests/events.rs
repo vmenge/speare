@@ -67,46 +67,30 @@ struct Bar {
     c: u64,
 }
 
-#[async_trait]
-impl Handler<A> for Bar {
-    type Ok = u64;
-    type Err = ();
-
-    async fn handle(&mut self, _msg: A, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
-        self.a += 1;
-        reply(self.a)
-    }
-}
-
-#[async_trait]
-impl Handler<B> for Bar {
-    type Ok = u64;
-    type Err = ();
-
-    async fn handle(&mut self, _msg: B, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
-        self.b += 1;
-        reply(self.b)
-    }
-}
-
-#[async_trait]
-impl Handler<C> for Bar {
-    type Ok = u64;
-    type Err = ();
-
-    async fn handle(&mut self, _msg: C, _ctx: &Ctx<Self>) -> Reply<u64, ()> {
-        self.c += 1;
-        reply(self.c)
-    }
-}
-
-#[async_trait]
-impl Process for Bar {
-    type Error = ();
-
+#[process]
+impl Bar {
+    #[subscriptions]
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<A>().await;
         evt.subscribe::<B>().await;
+    }
+
+    #[handler]
+    async fn handle_a(&mut self, _msg: A) -> Reply<u64, ()> {
+        self.a += 1;
+        reply(self.a)
+    }
+
+    #[handler]
+    async fn handle_b(&mut self, _msg: B) -> Reply<u64, ()> {
+        self.b += 1;
+        reply(self.b)
+    }
+
+    #[handler]
+    async fn handle_c(&mut self, _msg: C) -> Reply<u64, ()> {
+        self.c += 1;
+        reply(self.c)
     }
 }
 

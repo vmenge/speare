@@ -11,27 +11,23 @@ struct Bag {
     msgs: Vec<u8>,
 }
 
-impl Process for Bag {
-    type Error = ();
-}
-
 #[process]
 impl Bag {
     #[handler]
-    async fn wait(&mut self, msg: Wait, _: &Ctx<Self>) -> Reply<(), ()> {
+    async fn wait(&mut self, msg: Wait) -> Reply<(), ()> {
         time::sleep(Duration::from_millis(100)).await;
         self.msgs.push(msg.0);
         reply(())
     }
 
     #[handler]
-    async fn immediate(&mut self, msg: Immediate, _: &Ctx<Self>) -> Reply<(), ()> {
+    async fn immediate(&mut self, msg: Immediate) -> Reply<(), ()> {
         self.msgs.push(msg.0);
         reply(())
     }
 
     #[handler]
-    async fn get(&mut self, _: Get, _: &Ctx<Self>) -> Reply<Vec<u8>, ()> {
+    async fn get(&mut self, _: Get) -> Reply<Vec<u8>, ()> {
         reply(self.msgs.clone())
     }
 }

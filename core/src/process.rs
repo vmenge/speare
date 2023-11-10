@@ -4,29 +4,20 @@ use flume::Sender;
 use std::marker::PhantomData;
 
 #[derive(Debug)]
-pub struct Pid<P>
-where
-    P: Process,
-{
+pub struct Pid<P> {
     pub(crate) id: u32,
     pub(crate) runner_tx: MessageSender,
     pub(crate) exit_tx: Sender<ExitMessage>,
     phantom: PhantomData<P>,
 }
 
-impl<P> PartialEq for Pid<P>
-where
-    P: Process,
-{
+impl<P> PartialEq for Pid<P> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl<P> Clone for Pid<P>
-where
-    P: Process,
-{
+impl<P> Clone for Pid<P> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
@@ -37,10 +28,7 @@ where
     }
 }
 
-impl<P> Pid<P>
-where
-    P: Process,
-{
+impl<P> Pid<P> {
     pub(crate) fn new(id: u32, runner_tx: MessageSender, exit_tx: Sender<ExitMessage>) -> Self {
         Pid {
             id,
