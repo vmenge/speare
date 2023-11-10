@@ -28,11 +28,7 @@ impl Supervisor {
     }
 
     #[handler]
-    async fn handle_my_proc_exit(
-        &mut self,
-        signal: ExitSignal<MyProc>,
-        _: &Ctx<Self>,
-    ) -> Reply<(), ()> {
+    async fn handle_my_proc_exit(&mut self, signal: ExitSignal<MyProc>) -> Reply<(), ()> {
         if let ExitReason::Err(err) = signal.reason() {
             self.err = Some(err.to_string());
         }
@@ -41,7 +37,7 @@ impl Supervisor {
     }
 
     #[handler]
-    async fn get_err(&mut self, _: GetErr, _: &Ctx<Self>) -> Reply<Option<String>, ()> {
+    async fn get_err(&mut self, _: GetErr) -> Reply<Option<String>, ()> {
         reply(self.err.take())
     }
 }
@@ -66,11 +62,7 @@ impl Supervisor2 {
     }
 
     #[handler]
-    async fn handle_my_proc_exit(
-        &mut self,
-        signal: ExitSignal<MyProc>,
-        _: &Ctx<Self>,
-    ) -> Reply<(), ()> {
+    async fn handle_my_proc_exit(&mut self, signal: ExitSignal<MyProc>) -> Reply<(), ()> {
         if let ExitReason::Err(err) = signal.reason() {
             self.err = Some(err.to_string());
         }
@@ -79,7 +71,7 @@ impl Supervisor2 {
     }
 
     #[handler]
-    async fn get_err(&mut self, _: GetErr, _: &Ctx<Self>) -> Reply<Option<String>, ()> {
+    async fn get_err(&mut self, _: GetErr) -> Reply<Option<String>, ()> {
         reply(self.err.take())
     }
 }

@@ -121,12 +121,54 @@ impl Counter {
 }
 ```
 
-To terminate a process you can use the `.exit()` function.
+## Termminating Processes
+
+To terminate a process you can use the `.exit()` function. The `Process` will finish handling whatever message it's handling (if any), and then will immediately quit after.
 
 ```rust
 let node = Node::default();
 let counter_pid = node.spawn(Counter::default()).await;
 node.exit(&counter_pid, ExitReason::Shutdown).await;
+```
+
+It is possible to listen to an `ExitSignal<P>` which is sent from a `Process` when it is terminated. You first need to implement a `Handler` for the `ExitSignal<P>` for `Process` `P`, then  call `.monitor()` on that process.
+
+```rust
+struct ProcA;
+
+#[process]
+impl ProcA {}
+
+struct ProcB;
+
+#[process]
+impl ProcB {
+    #[on_init]
+    async fn init(&mut self, ctx: &Ctx<Self>) {
+        let a_pid = ctx.spawn(ProcA).await;
+        ctx.monitor(&a_pid);
+    }
+
+    #[handler]
+    async fn handle_proc_a_exit(&mut self, signal: ExitSignal<ProcA>) {
+        println!("oh no ProcA exited!");
+    }
+}
+```
+
+If necessary you can use a custom error type during termination, which can then be read from the `ExitSignal<P>`.
+
+```rust
+struct ProcA;
+
+#[process(Error = String)]
+impl ProcA {}
+
+async fn run() {
+    let node = Node::default();
+    let a_pid = node.spawn(ProcA).await;
+    node.exit(&a_pid, ExitReason::Err("something went wrong".to_string())).await;
+}
 ```
 
 ## The `Reply` type
