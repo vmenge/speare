@@ -7,8 +7,6 @@ With it, we can write
 ```rs
 pub struct Foo;
 
-impl Process for Foo {}
-
 #[process]
 impl Foo {
     #[handler]
@@ -28,7 +26,9 @@ instead of
 ```rs
 pub struct Foo;
 
-impl Process for Foo {}
+impl Process for Foo {
+    type Error = ();
+}
 
 #[async_trait]
 impl Handler<u64> for Foo {
