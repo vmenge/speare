@@ -17,6 +17,8 @@ struct Counter {
 
 #[async_trait]
 impl Process for Counter {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<DoubleCount>().await;
         evt.subscribe::<IncCount>().await;
@@ -72,6 +74,8 @@ async fn on_exit_is_called() {
 
     #[async_trait]
     impl Process for MyProc {
+        type Error = ();
+
         async fn on_exit(&mut self, _ctx: &Ctx<Self>) {
             self.tx.send(1).unwrap();
         }
@@ -83,7 +87,7 @@ async fn on_exit_is_called() {
     let pid = node.spawn(MyProc { tx }).await;
 
     // Act
-    node.exit(&pid).await;
+    node.exit(&pid, ExitReason::Shutdown).await;
     time::sleep(Duration::ZERO).await;
 
     // Assert

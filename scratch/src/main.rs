@@ -13,6 +13,8 @@ struct Dog {
 
 #[async_trait]
 impl Process for Dog {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<SayHi>().await;
     }
@@ -40,6 +42,8 @@ struct Cat;
 
 #[async_trait]
 impl Process for Cat {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<SayHi>().await;
     }
@@ -61,6 +65,8 @@ impl<T> Process for Container<T>
 where
     T: Sync + Send,
 {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<SayHi>().await;
     }

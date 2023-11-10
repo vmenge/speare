@@ -15,7 +15,9 @@ struct Counter {
     num: u64,
 }
 
-impl Process for Counter {}
+impl Process for Counter {
+    type Error = ();
+}
 
 #[process]
 impl Counter {
@@ -51,6 +53,8 @@ async fn main() {
 ```rust
 #[async_trait]
 impl Process for Counter {
+    type Error = ();
+
     async fn on_init(&mut self, ctx: &Ctx<Self>) {
         println!("Hello!");
     }
@@ -79,7 +83,7 @@ To terminate a process you can use the `.exit()` function.
 ```rust
 let node = Node::default();
 let counter_pid = node.spawn(Counter::default()).await;
-node.exit(&counter_pid).await;
+node.exit(&counter_pid, ExitReason::Shutdown).await;
 ```
 
 ## The `Reply` type
@@ -111,7 +115,9 @@ struct Dog {
     hi_responder: Option<Responder<Self, SayHi>>,
 }
 
-impl Process for Dog {}
+impl Process for Dog {
+    type Error = ();
+}
 
 #[process]
 impl Dog {
@@ -149,6 +155,8 @@ struct Dog;
 
 #[async_trait]
 impl Process for Dog {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<SayHi>().await;
     }
@@ -167,6 +175,8 @@ struct Cat;
 
 #[async_trait]
 impl Process for Cat {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<SayHi>().await;
     }

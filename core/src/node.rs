@@ -15,7 +15,7 @@ use tokio::{
     time,
 };
 
-use crate::process::{AskErr, Handler, Pid, Process};
+use crate::process::{AskErr, ExitReason, ExitSignal, Handler, Pid, Process};
 
 type Unknown = Box<dyn Any + Sync + Send + 'static>;
 type AnyProc = Unknown;
@@ -29,8 +29,17 @@ type ProcessRunner = Arc<
         + 'static,
 >;
 
+type ExitSignalSender = Box<
+    dyn FnOnce(Unknown) -> Pin<Box<dyn Future<Output = Unknown> + Send>> + Send + Sync + 'static,
+>;
+
 pub type MessageSender = Sender<(ProcessRunner, AnyMsg)>;
 type Subscribers = HashMap<TypeId, Vec<(ProcessRunner, MessageSender)>>;
+
+pub enum ExitMessage {
+    Exit(Unknown),
+    StoreMonitor(ExitSignalSender),
+}
 
 #[derive(Default, Clone)]
 pub struct Node {
@@ -53,11 +62,14 @@ impl Node {
 
     /// Terminates a `Process`. Exit signal will be received after the current
     /// (if any) message currently being handled by the `Process`.
-    pub async fn exit<P>(&self, pid: &Pid<P>)
+    pub async fn exit<P>(&self, pid: &Pid<P>, reason: ExitReason<P>)
     where
         P: Process + Send + Sync + 'static,
     {
-        pid.exit_tx.try_send(true).ok();
+        let exit_signal = ExitSignal::new(pid.clone(), reason);
+        let exit_signal = ExitMessage::Exit(Box::new(exit_signal));
+
+        pid.exit_tx.try_send(exit_signal).ok();
     }
 
     /// Publishes message to any `Process` that implements a `Handler` for it and that has subscribed to it.
@@ -173,16 +185,32 @@ impl Node {
             process.on_init(&ctx).await;
             let mut ctx = Box::new(ctx) as AnyCtx;
             let mut process: Unknown = Box::new(process);
+            let mut monitors: Vec<ExitSignalSender> = vec![];
 
             loop {
                 tokio::select! {
                     biased;
 
-                    _ = exit_rx.recv_async() => {
-                        let process = process.downcast_mut::<P>().unwrap();
-                        let ctx = ctx.downcast::<Ctx<P>>().unwrap();
-                        process.on_exit(&ctx).await;
-                        break;
+                    exit_msg = exit_rx.recv_async() => {
+                        match exit_msg {
+                            Err(_) => (),
+
+                            Ok(ExitMessage::StoreMonitor(exit_signal_sender)) => {
+                                monitors.push(exit_signal_sender);
+                            }
+
+                            Ok(ExitMessage::Exit(mut any_signal)) => {
+                                let process = process.downcast_mut::<P>().unwrap();
+                                let ctx = ctx.downcast::<Ctx<P>>().unwrap();
+                                process.on_exit(&ctx).await;
+
+                                for monitor in monitors {
+                                    any_signal = monitor(any_signal).await;
+                                }
+
+                                break;
+                            }
+                        }
                     }
 
                     handler = msg_rx.recv_async() => {
@@ -268,6 +296,33 @@ where
     /// The `Pid` of the current `Process`
     pub fn this(&self) -> &Pid<P> {
         &self.pid
+    }
+}
+
+impl<P> Ctx<P>
+where
+    P: 'static + Send + Sync + Process,
+{
+    pub fn monitor<Proc>(&self, pid: &Pid<Proc>)
+    where
+        Proc: Sync + Send + Process + 'static,
+        P: 'static + Send + Sync + Process + Handler<ExitSignal<Proc>>,
+    {
+        let node = self.deref().clone();
+        let this = self.this().clone();
+
+        let exit_signal_sender: ExitSignalSender = Box::new(|any_exit_signal: Unknown| {
+            Box::pin(async move {
+                let exit_signal = any_exit_signal.downcast::<ExitSignal<Proc>>().unwrap();
+                node.tell(&this, exit_signal.deref().clone()).await;
+                let any_exit_signal: Unknown = exit_signal;
+                any_exit_signal
+            })
+        });
+
+        pid.exit_tx
+            .send(ExitMessage::StoreMonitor(exit_signal_sender))
+            .ok();
     }
 }
 

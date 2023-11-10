@@ -11,7 +11,9 @@ struct Bag {
     msgs: Vec<u8>,
 }
 
-impl Process for Bag {}
+impl Process for Bag {
+    type Error = ();
+}
 
 #[process]
 impl Bag {

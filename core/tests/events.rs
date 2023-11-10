@@ -18,6 +18,8 @@ struct Foo {
 
 #[async_trait]
 impl Process for Foo {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<A>().await;
         evt.subscribe::<B>().await;
@@ -100,6 +102,8 @@ impl Handler<C> for Bar {
 
 #[async_trait]
 impl Process for Bar {
+    type Error = ();
+
     async fn subscriptions(&self, evt: &EventBus<Self>) {
         evt.subscribe::<A>().await;
         evt.subscribe::<B>().await;
