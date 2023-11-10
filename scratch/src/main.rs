@@ -78,7 +78,7 @@ where
     T: Sync + Send,
 {
     #[handler]
-    async fn hi(&mut self, _msg: SayHi, _ctx: &Ctx<Self>) -> Reply<(), ()> {
+    async fn hi(&mut self, _msg: SayHi) -> Reply<(), ()> {
         println!("Hi im container!");
         reply(())
     }

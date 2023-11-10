@@ -5,6 +5,21 @@ use quote::quote;
 use syn::{parse_macro_input, FnArg, ImplItem, ItemImpl, ReturnType, Type};
 
 #[proc_macro_attribute]
+pub fn subscriptions(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn on_init(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn on_exit(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
 pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
@@ -83,6 +98,13 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
                 let ok_type = &args[0];
                 let err_type = &args[1];
 
+                let ctx_arg_present = inputs.iter().any(matches_ctx_arg);
+                let fn_call = if ctx_arg_present {
+                    quote! { self.#fn_name(msg, ctx).await }
+                } else {
+                    quote! { self.#fn_name(msg).await }
+                };
+
                 additional_impls.push(quote! {
                     #[async_trait]
                     impl #impl_generics Handler<#msg_type> for #self_type #where_clause {
@@ -90,7 +112,7 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
                         type Err = #err_type;
 
                         async fn handle(&mut self, msg: #msg_type, ctx: &Ctx<Self>) -> Reply<Self::Ok, Self::Err> {
-                            self.#fn_name(msg, ctx).await
+                            #fn_call
                         }
                     }
                 });
@@ -104,4 +126,36 @@ fn p(mut input: ItemImpl) -> Result<TokenStream, &'static str> {
     };
 
     Ok(TokenStream::from(expanded))
+}
+
+fn matches_ctx_arg(arg: &FnArg) -> bool {
+    if let FnArg::Typed(pat_type) = arg {
+        if let Type::Reference(type_reference) = &*pat_type.ty {
+            // Now check if the inner type is Ctx<Self>
+            if let Type::Path(type_path) = &*type_reference.elem {
+                // Check the type path for `Ctx` and the generic argument for `Self`
+                return type_path.path.segments.iter().any(|segment| {
+                    if segment.ident == "Ctx" {
+                        if let syn::PathArguments::AngleBracketed(angle_args) = &segment.arguments {
+                            angle_args.args.iter().any(matches_self)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                });
+            }
+        }
+    }
+    false
+}
+
+fn matches_self(arg: &syn::GenericArgument) -> bool {
+    if let syn::GenericArgument::Type(Type::Path(type_path)) = arg {
+        // Check if the generic argument is `Self`
+        type_path.path.is_ident("Self")
+    } else {
+        false
+    }
 }

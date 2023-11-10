@@ -54,6 +54,7 @@ where
 #[allow(unused_variables)]
 #[async_trait]
 pub trait Process: Sized + Sync + Send {
+    /// An Error type that can be returned as the `ExitReason` for the `Process`.
     type Error: Clone + Sync + Send;
 
     async fn subscriptions(&self, evt: &EventBus<Self>) {}
@@ -87,10 +88,13 @@ where
     Handler(P::Err),
 }
 
+/// Sends back a value that can be read by a `.ask()` call.
 pub fn reply<T, E>(item: T) -> Result<Option<T>, E> {
     Ok(Some(item))
 }
 
+/// Does not send back a value from this function, making `.ask()` calls fail unless a value is manually sent
+/// by using `ctx.responder()`
 pub fn noreply<T, E>() -> Result<Option<T>, E> {
     Ok(None)
 }
