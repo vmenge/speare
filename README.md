@@ -121,7 +121,7 @@ impl Counter {
 }
 ```
 
-## Termminating Processes
+## Terminating Processes
 
 To terminate a process you can use the `.exit()` function. The `Process` will finish handling whatever message it's handling (if any), and then will immediately quit after.
 
@@ -213,7 +213,7 @@ impl Dog {
     }
 
     #[handler]
-    async fn get_bone(&mut self, _msg: GiveBone, _ctx: &Ctx<Self>) -> Reply<(), ()> {
+    async fn get_bone(&mut self, _msg: GiveBone) -> Reply<(), ()> {
         if let Some(responder) = &self.hi_responder {
             responder.reply(Ok("Hello".to_string()))
         }
@@ -243,7 +243,7 @@ impl Dog {
     }
 
     #[handler]
-    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Reply<(), ()> {
+    async fn hi(&mut self, msg: SayHi) -> Reply<(), ()> {
         println!("WOOF!");
         reply(())
     }
@@ -259,7 +259,7 @@ impl Cat {
     }
 
     #[handler]
-    async fn hi(&mut self, msg: SayHi, ctx: &Ctx<Self>) -> Reply<(), ()> {
+    async fn hi(&mut self, msg: SayHi) -> Reply<(), ()> {
         println!("MEOW!");
         reply(())
     }
