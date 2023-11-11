@@ -32,8 +32,8 @@ impl Process for Foo {
 
 #[async_trait]
 impl Handler<u64> for Foo {
-    type Reply = String;
-    type Error = ();
+    type Ok = String;
+    type Err = ();
 
     async fn handle(&mut self, msg: u64, ctx: &Ctx<Self>) -> Result<String, ()> {
         Ok(format!("{msg}"))
@@ -42,8 +42,8 @@ impl Handler<u64> for Foo {
 
 #[async_trait]
 impl Handler<String> for Foo {
-    type Reply = String;
-    type Error = ();
+    type Ok = String;
+    type Err = ();
 
     async fn handle(&mut self, msg: u64, ctx: &Ctx<Self>) -> Result<String, ()> {
         Ok(msg)

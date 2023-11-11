@@ -45,7 +45,7 @@ pub fn subscriptions(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///    }
 ///}
 /// ```
-/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/lifecycle_management.html)
 #[proc_macro_attribute]
 pub fn on_init(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
@@ -63,7 +63,7 @@ pub fn on_init(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///    }
 ///}
 /// ```
-/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/lifecycle_management.html)
 #[proc_macro_attribute]
 pub fn on_exit(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
@@ -98,7 +98,7 @@ pub fn on_exit(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///    }
 ///}
 /// ```
-/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/handlers.html)
 #[proc_macro_attribute]
 pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

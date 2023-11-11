@@ -41,6 +41,19 @@ pub enum ExitMessage {
     StoreMonitor(ExitSignalSender),
 }
 
+/// A `Node` provides methods to spawn, send messages to, and terminate processes.
+/// It is essentially the environment in which a `Process` is spawned. You can create
+/// multiple nodes in your application to isolate processes from each other, but in
+/// most cases you'll need only one throughout your whole program.
+///
+/// ## Example
+/// ```ignore
+/// async fn example() {
+///     let node = Node::default();
+///     node.spawn(MyProcess).await;
+/// }
+/// ```
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/spawning_a_process.html)
 #[derive(Default, Clone)]
 pub struct Node {
     count: Arc<Mutex<u32>>,
@@ -49,6 +62,14 @@ pub struct Node {
 
 impl Node {
     /// Spawns a `Process`.
+    /// ## Example
+    /// ```ignore
+    /// async fn example() {
+    ///     let node = Node::default();
+    ///     let my_proc_pid = node.spawn(MyProcess).await;
+    /// }
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/spawning_a_process.html)
     pub async fn spawn<P>(&self, proc: P) -> Pid<P>
     where
         P: Process + Send + Sync + 'static,
@@ -60,8 +81,15 @@ impl Node {
         pid
     }
 
-    /// Terminates a `Process`. Exit signal will be received after the current
-    /// (if any) message currently being handled by the `Process`.
+    /// Terminates a `Process`. `ExitSignal<P>` will be received after the current
+    /// (if any) message is finished being handled by the `Process`.
+    /// ## Example
+    /// ```ignore
+    /// let node = Node::default();
+    ///let counter_pid = node.spawn(Counter::default()).await;
+    ///node.exit(&counter_pid, ExitReason::Shutdown).await;
+    /// ````
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/lifecycle_management.html)
     pub async fn exit<P>(&self, pid: &Pid<P>, reason: ExitReason<P>)
     where
         P: Process + Send + Sync + 'static,
@@ -72,9 +100,38 @@ impl Node {
         pid.exit_tx.try_send(exit_signal).ok();
     }
 
-    /// Publishes message to any `Process` that implements a `Handler` for it and that has subscribed to it.
+    /// Publishes message to any `Process` that implements a `Handler` for it and that has explicitly subscribed to it.
     ///
     /// **Note:** Messsage must implement `Clone`, as it will be called to send the message to multiple processes.
+    /// ## Example
+    /// ```ignore
+    /// struct Cat;
+    ///
+    ///#[process]
+    ///impl Cat {
+    ///    #[subscriptions]
+    ///    async fn subs(&self, evt: &EventBus<Self>) {
+    ///        evt.subscribe::<SayHi>().await;
+    ///    }
+    ///
+    ///    #[handler]
+    ///    async fn hi(&mut self, msg: SayHi) -> Reply<(), ()> {
+    ///        println!("MEOW!");
+    ///        reply(())
+    ///    }
+    ///}
+    ///
+    ///struct Dog;
+    ///
+    ///#[tokio::main]
+    ///async fn main() {
+    ///    let node = Node::default();
+    ///    node.spawn(Cat).await;
+    ///    node.publish(SayHi).await;  
+    ///    // "MEOW!"
+    ///}
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
     pub async fn publish<M>(&self, msg: M)
     where
         M: 'static + Send + Sync + Clone,
@@ -109,6 +166,23 @@ impl Node {
     }
 
     /// Returns `true` if the `Process` for the given `Pid<P>` is still running.
+    /// ## Example
+    /// ```ignore
+    /// async fn exit_kills_process_gracefully() {
+    ///    let node = Node::default();
+    ///    let pid = node.spawn(MyProc).await;
+    ///
+    ///    let is_alive_before_exit = node.is_alive(&pid);
+    ///    node.exit(&pid, ExitReason::Shutdown).await;
+    ///    // we wait 0ms here just to be sure we won't check again before the Process finishes shutting down
+    ///    tokio::time::sleep(Duration::from_millis(0)).await;
+    ///    let is_alive_after_exit = node.is_alive(&pid);
+    ///
+    ///    assert!(is_alive_before_exit);
+    ///    assert!(!is_alive_after_exit);
+    ///}
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/lifecycle_management.html)
     pub fn is_alive<P>(&self, pid: &Pid<P>) -> bool
     where
         P: 'static + Send + Sync + Process,
@@ -117,6 +191,18 @@ impl Node {
     }
 
     /// Sends a message to a `Process` without waiting for it to be handled.
+    /// ## Example
+    /// ```ignore
+    ///async fn example() {
+    ///    let node = Node::default();
+    ///    let dog_pid = node.spawn(Dog::new()).await;
+    ///
+    ///    // Fire and forget
+    ///    node.tell(&dog_pid, Bark).await;
+    ///}
+    ///
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/handlers.html)
     pub async fn tell<P, M>(&self, pid: &Pid<P>, msg: M)
     where
         P: 'static + Send + Sync + Process + Handler<M>,
@@ -128,6 +214,18 @@ impl Node {
     }
 
     /// Sends a message to a `Process` after the specified `Duration`.
+    /// ## Example
+    /// ```ignore
+    ///async fn example() {
+    ///    let node = Node::default();
+    ///    let dog_pid = node.spawn(Dog::new()).await;
+    ///
+    ///    // Fire and forget after 10 milliseconds
+    ///    node.tell_in(&dog_pid, GiveBone, Duration::from_millis(10)).await;
+    ///}
+    ///
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/handlers.html)
     pub async fn tell_in<P, M>(&self, pid: &Pid<P>, msg: M, delay: Duration)
     where
         P: 'static + Send + Sync + Process + Handler<M>,
@@ -141,7 +239,20 @@ impl Node {
         });
     }
 
-    /// Sends a message to a `Process`, waiting for it to be handled and for its respective response.
+    /// Sends a message to a `Process`, waiting for it to respond.
+    /// ## Example
+    /// ```ignore
+    ///async fn example() {
+    ///    let node = Node::default();
+    ///    let dog_pid = node.spawn(Dog::new()).await;
+    ///
+    ///    // Request response
+    ///    let greeting = node.ask(&dog_pid, SayHi).await.unwrap_or_else(|_| "".to_string());
+    ///    println!("The dog says: {}", greeting);
+    ///}
+    ///
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/handlers.html)
     pub async fn ask<P, M>(
         // TODO: add default timeout, and make it configureable
         &self,
@@ -261,6 +372,10 @@ where
     })
 }
 
+/// Allows you to access methods in the `Node` this `Process` belongs to, while
+/// providing extra functionality such as this processes' id, `Process` monitoring,
+/// and deferred replies.
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare)
 pub struct Ctx<P>
 where
     P: Send + Sync + 'static,
@@ -303,6 +418,43 @@ impl<P> Ctx<P>
 where
     P: 'static + Send + Sync,
 {
+    /// Allows the current `Process` to receive a message when the `Process` with the id given in the arguments
+    /// exits. Can only be called if the current `Process` implementas handler for the `ExitSignal<P>` of the monitored
+    /// `Process`.
+    /// ## Example
+    /// ```ignore
+    /// struct ProcA;
+    ///
+    ///#[process(Error = String)]
+    ///impl ProcA {}
+    ///
+    ///struct ProcB {
+    ///    a_pid: Pid<ProcA>
+    ///}
+    ///
+    ///#[process]
+    ///impl ProcB {
+    ///    #[on_init]
+    ///    async fn init(&mut self, ctx: &Ctx<Self>) {
+    ///        ctx.monitor(&self.a_pid);
+    ///        ctx.exit(&a_pid, ExitReason::Err("something went wrong".to_string())).await;
+    ///    }
+    ///
+    ///    #[handler]
+    ///    async fn handle_proc_a_exit(&mut self, signal: ExitSignal<ProcA>) -> Reply<(), ()> {
+    ///        let reason = match signal.reason() {
+    ///            ExitReason::Normal => "finishing running its tasks",
+    ///            ExitReason::Shutdown => "intentional interrupt by another process",
+    ///            ExitReason::Err(e) => e,
+    ///        };
+    ///
+    ///        println!("ProcA exited due to: {}", reason);
+    ///
+    ///        reply(())
+    ///    }
+    ///}
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/lifecycle_management.html)
     pub fn monitor<Proc>(&self, pid: &Pid<Proc>)
     where
         Proc: Sync + Send + Process + 'static,
@@ -330,6 +482,43 @@ impl<P> Ctx<P>
 where
     P: 'static + Send + Sync,
 {
+    /// Creates a `Responder`, allowing you to respond to the current message at a later time.
+    /// Will return `None` if the current `Handler` is called with `.tell` instead of `.ask`.
+    /// ## Example
+    /// ```ignore
+    /// use speare::*;
+    ///
+    ///struct SayHi;
+    ///struct GiveBone;
+    ///
+    ///#[derive(Default)]
+    ///struct Dog {
+    ///    hi_responder: Option<Responder<Self, SayHi>>,
+    ///}
+    ///
+    ///#[process]
+    ///impl Dog {
+    ///    // the hi Handler specifies that it returns a String as a response,
+    ///    // thus when we the Responder on get_bone, the Reply sent through
+    ///    // it must be a String.
+    ///    #[handler]
+    ///    async fn hi(&mut self, _msg: SayHi, ctx: &Ctx<Self>) -> Reply<String, ()> {
+    ///        self.hi_responder = ctx.responder::<SayHi>();
+    ///
+    ///        noreply()
+    ///    }
+    ///
+    ///    #[handler]
+    ///    async fn get_bone(&mut self, _msg: GiveBone) -> Reply<(), ()> {
+    ///        if let Some(responder) = &self.hi_responder {
+    ///            responder.reply(Ok("Hello".to_string()))
+    ///        }
+    ///
+    ///        reply(())
+    ///    }
+    ///}
+    /// ```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/reply.html#deferring-replies)
     pub fn responder<M>(&self) -> Option<Responder<P, M>>
     where
         P: 'static + Send + Sync + Handler<M>,
@@ -363,6 +552,7 @@ where
     }
 }
 
+/// Allows the current `Process` to subscribe to global publishes of specific messages.
 pub struct EventBus<P>
 where
     P: Send + Sync + 'static,
@@ -381,6 +571,26 @@ where
 
     /// Subscribes an existing `Handler<M>` implementation to receive `Node`-wide
     /// publishes of message `M`.
+    /// The current `Process` **must** have a `Handler` implemented for any message it wishes to subscribe to.
+    /// ## Example
+    /// ```ignore
+    ///struct Cat;
+    ///
+    ///#[process]
+    ///impl Cat {
+    ///    #[subscriptions]
+    ///    async fn subs(&self, evt: &EventBus<Self>) {
+    ///        evt.subscribe::<SayHi>().await;
+    ///    }
+    ///
+    ///    #[handler]
+    ///    async fn hi(&mut self, msg: SayHi) -> Reply<(), ()> {
+    ///        println!("MEOW!");
+    ///        reply(())
+    ///    }
+    ///}
+    ///```
+    /// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
     pub async fn subscribe<M>(&self)
     where
         P: Handler<M> + Send + Sync + 'static,
