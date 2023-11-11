@@ -61,7 +61,7 @@ impl Counter {
 async fn main() {
     let node = Node::default();
     let counter_pid = node.spawn(Counter { count: 0 }).await;
-    node.tell(&counter_pid, ()).await;
+    node.tell(&counter_pid, IncreaseBy(5)).await;
 }
 
 ```
