@@ -1,47 +1,43 @@
-use std::time::Duration;
-
 use speare::*;
 
-#[derive(Clone)]
-struct NoCtxTest;
-struct WithCtxTest;
+struct Ping;
+struct Pong;
 
-struct MyProc<T>
-where
-    T: Sync + Send,
-{
-    t: T,
+struct ProcA {
+    b_pid: Pid<ProcB>,
 }
 
 #[process]
-impl<T> MyProc<T>
-where
-    T: Send + Sync,
-{
-    #[subscriptions]
-    async fn sub(&self, evt: &EventBus<Self>) {
-        evt.subscribe::<NoCtxTest>().await;
-    }
-
+impl ProcA {
     #[handler]
-    async fn no_ctx_test(&mut self, _: NoCtxTest) -> Reply<(), ()> {
-        println!("hi");
+    async fn ping(&mut self, _msg: Ping, ctx: &Ctx<Self>) -> Reply<(), ()> {
+        println!("ping!");
+        ctx.tell(&self.b_pid, Pong).await;
 
-        noreply()
+        reply(())
     }
+}
 
+struct ProcB;
+
+#[process]
+impl ProcB {
     #[handler]
-    async fn with_ctx_test(&mut self, _: WithCtxTest, ctx: &Ctx<Self>) -> Reply<(), ()> {
-        noreply()
+    async fn pong(&mut self, _msg: Pong) -> Reply<(), ()> {
+        println!("pong!");
+
+        reply(())
     }
 }
 
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    node.spawn(MyProc { t: 0 }).await;
+    let b_pid = node.spawn(ProcB).await;
+    let a_pid = node.spawn(ProcA { b_pid }).await;
 
-    node.publish(NoCtxTest).await;
+    node.tell(&a_pid, Ping).await;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // ping!
+    // pong!
 }
