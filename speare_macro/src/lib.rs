@@ -7,21 +7,98 @@ use syn::{
     parse_macro_input, parse_quote, FnArg, Ident, ImplItem, ItemImpl, ReturnType, Token, Type,
 };
 
+/// Allows you to register subscriptions to any global publishes of a message.
+///
+/// ## Example
+/// ```ignore
+///struct Cat;
+///
+///#[process]
+///impl Cat {
+///    #[subscriptions]
+///    async fn subs(&self, evt: &EventBus<Self>) {
+///        evt.subscribe::<SayHi>().await;
+///    }
+///
+///    #[handler]
+///    async fn hi(&mut self, msg: SayHi) -> Reply<(), ()> {
+///        println!("MEOW!");
+///        reply(())
+///    }
+///}
+///```
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
 #[proc_macro_attribute]
 pub fn subscriptions(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+/// Defines a custom behaviour that is run as soon as the `tokio::task` in which the `Process` lives on is started.
+///
+/// ## Example
+/// ```ignore
+///#[process]
+///impl Counter {
+///    #[on_init]
+///    async fn init(&mut self, ctx: &Ctx<Self>) {
+///        println!("Hello!");
+///    }
+///}
+/// ```
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
 #[proc_macro_attribute]
 pub fn on_init(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+/// Defines a custom behaviour to run when the `Process` is terminated.
+///
+/// ## Example
+/// ```ignore
+///#[process]
+///impl Counter {
+///    #[on_exit]
+///    async fn exit(&mut self, ctx: &Ctx<Self>) {
+///        println!("Goodbye!");
+///    }
+///}
+/// ```
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
 #[proc_macro_attribute]
 pub fn on_exit(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+/// Allows handling of messages sent to this `Process`
+///
+/// ## Example
+/// ```ignore
+/// use speare::*;
+///
+///struct IncreaseBy(u64);
+///struct RecursiveIncrease;
+///
+///struct Counter {
+///    count: u64,
+///}
+///
+///#[process]
+///impl Counter {
+///    #[handler]
+///    async fn increment(&mut self, msg: IncreaseBy) -> Reply<(),()> {
+///        self.count += msg.0;
+///        reply(())
+///    }
+///
+///    #[handler]
+///    async fn inc_loop(&mut self, msg: RecursiveIncrease, ctx: &Ctx<Self>) -> Reply<(),()> {
+///        self.count += 1;
+///        ctx.tell(ctx.this(), RecursiveIncrease).await;
+///        reply(())
+///    }
+///}
+/// ```
+/// Learn more on [The Speare Book](https://vmenge.github.io/speare/pub_sub.html)
 #[proc_macro_attribute]
 pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
