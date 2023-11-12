@@ -42,7 +42,7 @@ The optional `Ctx<Self>` argument provides additional capabilities, among them:
 - [Deferring replies](./reply.md#deferring-replies) and `Process` [monitoring](./lifecycle_management.md#monitoring-processes), both which will be talked about later in the book.
 
 
-The `Reply<T, E>` type is an alias for `Result<Option<T>, E>`. When replying to a message, use the `reply()` function for convenience. You can read more about this [in the following section of the book](./reply.md), which talks about the `Reply<T,E>` type.
+The `Reply<T, E>` type is an alias for `Result<Option<T>, E>`. When replying to a message, use the `reply()` function for convenience. You can read more about this [in the following section of the book](./reply.md), which talks about it in more detail.
 
 ## Message Passing Methods: `.tell`, `.tell_in`, and `.ask`
 In `speare`, processes communicate using three primary methods: `.tell`, `.tell_in`, and `.ask`. These methods are available in both the `Node` and `Ctx<Self>` types.

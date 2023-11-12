@@ -1,8 +1,8 @@
 # Spawning a Process
-In `speare`, a process represents an isolated unit of execution, similar to an actor in actor-based concurrency models. Each process maintains its state and communicates with other processes via message passing.
+In `speare`, a `Process` represents an isolated unit of execution, similar to an actor in actor-based concurrency models. Each `Process` maintains its state and communicates with other processes via message passing.
 
 ## Creating a Process
-In `speare`, a process is defined as a struct, which becomes a process through the `#[process]` macro on its implementation block. This macro automatically implements the `Process` trait for your struct, transforming it into a functional process that can be managed within the `speare` framework.
+First define a struct, then annotate its implementation block with the `#[process]` macro. This macro automatically implements the `Process` trait for your struct, allowing it to be managed by the `speare` framework, enabling feature such as lifecycle management and message handling.
 
 ```rust
 use speare::*;
@@ -18,10 +18,8 @@ impl MyProcess {
 
 ```
 
-By using the `#[process]` macro, `MyProcess` now has the capabilities of a `Process`, including lifecycle management and message handling, as defined in the `Process` trait.
-
 ## Spawning the Process
-To bring your process to life in `speare`, use a `Node` to spawn it. This action initiates the process and returns a `Pid<P>`, where `P` is the type of your process that implemented the `Process` trait.
+To bring your process to life in `speare`, use a `Node` to spawn it. This spawns a `tokio::task` and gives it ownership over your struct, returning a `Pid<P>`, where `P` is the type of your process that implemented the `Process` trait.
 
 ```rust
 #[tokio::main]

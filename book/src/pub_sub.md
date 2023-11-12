@@ -6,7 +6,6 @@ In `speare`, the Publish / Subscribe pattern is implemented with a focus on expl
 
 To subscribe to global publishes, the message must implement `Clone`. Here’s how it works:
 
-### **Defining a Subscribable Message** 
 Create a message type that implements `Clone`.
 
 ```rust
@@ -14,8 +13,7 @@ Create a message type that implements `Clone`.
 struct SayHi;
 ```
 
-### **Implementing Subscriptions**
-In the `Process` implementation, use the `#[subscriptions]` attribute to define subscriptions. It is only possible to subscribe to messages which have a `Handler` implemented.
+In the `Process` implementation, use the `#[subscriptions]` attribute to define subscriptions. It is only possible to subscribe to messages which the current `Process` has a `Handler` implemented for.
 
 ```rust
 struct Cat;

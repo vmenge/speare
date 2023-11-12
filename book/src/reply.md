@@ -7,11 +7,11 @@ The two main reasons `Reply` was implemented as an alias were:
 
 ## Helper Functions: `reply()` and `noreply()`
 `speare` provides two helper functions that should be used when returning values from handlers:
-- `reply()`: This function is used to easily create a successful `Reply`. It wraps the return value in an `Option`, then in a `Result`.
+- `reply()`: This function is used to easily create a successful `Reply`. It wraps the return value in `Some`, then in `Ok`.
 - `noreply()`: Use this when you don't need to send back any data. It essentially returns `Ok(None)`.
 
 > **Any `Handler` that returns `noreply()` will return an `AskErr::NoReply` to `.ask` calls, unless [deferred replies](./reply.md#deferring-replies) are implemented.** This means that more often than not you might find it better to 
-return with `reply(())` than `noreply()`.
+return with `reply(())` than `noreply()`, unless you want to explicitly forbid `.ask` calls.
 
 ## Early Exit with `?`
 Since `Reply<T, E>` is a `Result`, you can use the `?` operator for early exit in error scenarios. This can simplify error handling in your handlers.
@@ -27,7 +27,7 @@ async fn process_message(&mut self, msg: MyMessage) -> Reply<MyType, MyError> {
 ## Deferring Replies
 In `speare`, you can delay responses to messages. This is done by using `noreply()` in your `#[handler]` and storing a `Responder` for later use. 
 
-> It's important to remember that if you don't store the `Responder` and use `noreply()`, any `.ask()` calls to that `#[handler]` will fail, as it expects a reply which isn't provided. 
+> It's important to remember that if you don't store the `Responder` and use `noreply()`, any `.ask()` calls to that `#[handler]` will fail immediately with `AskErr::NoReply`, as it expects a reply which isn't provided. 
 
 This technique allows for more flexible response patterns, like in the example below where `Dog` responds to a `SayHi` message only after receiving a `GiveBone` message.
 

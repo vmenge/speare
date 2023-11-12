@@ -1,13 +1,13 @@
 # Lifecycle Management in Speare
 
-In `speare`, understanding the lifecycle of a `Process` is key to effectively managing concurrency. The lifecycle stages include creation, initialization, execution, and termination, each offering opportunities for custom behavior.
+Understanding the lifecycle of a `Process` is key to effectively managing concurrency. The lifecycle stages include creation, initialization, execution, and termination, each offering opportunities for custom behavior.
 
 ## Process Lifecycle
 
 1. **Creation**: A `Process` is created by the user.
 2. **Spawning**: The `Process` is passed to the `spawn` function.
-3. **Subscriptions**: Any [pub/sub event subscriptions](./pub_sub.md) are made.
-4. **Task Initialization**: The `Process` is put into a `tokio::task`.
+3. **Subscriptions**: Any [pub / sub event subscriptions](./pub_sub.md) are made.
+4. **Task Initialization**: The `Process` is moved into a `tokio::task`.
 5. **Initialization**: `on_init` is called, allowing for startup behavior.
 6. **Execution**: The `Process` runs, handling messages.
 7. **Termination Signal**: Upon receiving an `ExitSignal<P>`, the `Process` begins termination.
@@ -50,24 +50,24 @@ node.exit(&counter_pid, ExitReason::Shutdown).await;
 You can monitor a process for its termination signal using `ExitSignal<P>`. Implement a `Handler` for `ExitSignal<P>` and use `.monitor()` on the process to receive notifications upon its exit.
 
 ```rust
-struct ProcA;
+struct Quitter;
 
 #[process]
-impl ProcA {}
+impl Quitter {}
 
-struct ProcB;
+struct Supervisor;
 
 #[process]
-impl ProcB {
+impl Supervisor {
     #[on_init]
     async fn init(&mut self, ctx: &Ctx<Self>) {
-        let a_pid = ctx.spawn(ProcA).await;
-        ctx.monitor(&a_pid);
+        let quitter_pid = ctx.spawn(Quitter).await;
+        ctx.monitor(&quitter_pid);
     }
 
     #[handler]
-    async fn handle_proc_a_exit(&mut self, signal: ExitSignal<ProcA>) -> Reply<(), ()> {
-        println!("ProcA exited!");
+    async fn handle_exit(&mut self, signal: ExitSignal<Quitter>) -> Reply<(), ()> {
+        println!("Quitter exited!");
         reply(())
     }
 }
@@ -76,32 +76,32 @@ impl ProcB {
 Custom error types can be utilized during termination for more detailed exit signaling.
 
 ```rust
-struct ProcA;
+struct Quitter;
 
 #[process(Error = String)]
-impl ProcA {}
+impl Quitter {}
 
-struct ProcB {
-    a_pid: Pid<ProcA>
+struct Supervisor {
+    quitter_pid: Pid<ProcA>
 }
 
 #[process]
-impl ProcB {
+impl Supervisor {
     #[on_init]
     async fn init(&mut self, ctx: &Ctx<Self>) {
-        ctx.monitor(&self.a_pid);
-        ctx.exit(&a_pid, ExitReason::Err("something went wrong".to_string())).await;
+        ctx.monitor(&self.quitter_pid);
+        ctx.exit(&quitter_pid, ExitReason::Err("something went wrong".to_string())).await;
     }
 
     #[handler]
-    async fn handle_proc_a_exit(&mut self, signal: ExitSignal<ProcA>) -> Reply<(), ()> {
+    async fn handle_exit(&mut self, signal: ExitSignal<Quitter>) -> Reply<(), ()> {
         let reason = match signal.reason() {
             ExitReason::Normal => "finishing running its tasks",
             ExitReason::Shutdown => "intentional interrupt by another process",
             ExitReason::Err(e) => e,
         };
 
-        println!("ProcA exited due to: {}", reason);
+        println!("Quitter exited due to: {}", reason);
 
         reply(())
     }
@@ -109,7 +109,7 @@ impl ProcB {
 
 async fn run() {
     let node = Node::default();
-    let a_pid = node.spawn(ProcA).await;
-    node.spawn(ProcB { a_pid: a_pid.clone() }).await;
+    let quitter_pid = node.spawn(Quitter).await;
+    node.spawn(Supervisor { quitter_pid: quitter_pid.clone() }).await;
 }
 ```
