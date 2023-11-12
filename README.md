@@ -1,8 +1,10 @@
 # speare
-`speare` is a minimalistic actor framework that also has pub / sub capabities.
 
 [![crates.io](https://img.shields.io/crates/v/speare.svg)](https://crates.io/crates/speare)
 [![docs.rs](https://docs.rs/speare/badge.svg)](https://docs.rs/speare)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+`speare` is a minimalistic actor framework that also has pub / sub capabities.
 
 ## Speare at a Glance
 ```rust
@@ -11,25 +13,25 @@ use speare::*;
 struct Ping;
 struct Pong;
 
-struct ProcA {
-    b_pid: Pid<ProcB>,
+struct Pinger {
+    ponger_pid: Pid<Ponger>,
 }
 
 #[process]
-impl ProcA {
+impl Pinger {
     #[handler]
     async fn ping(&mut self, _msg: Ping, ctx: &Ctx<Self>) -> Reply<(), ()> {
         println!("ping!");
-        ctx.tell(&self.b_pid, Pong).await;
+        ctx.tell(&self.ponger_pid, Pong).await;
 
         reply(())
     }
 }
 
-struct ProcB;
+struct Ponger;
 
 #[process]
-impl ProcB {
+impl Ponger {
     #[handler]
     async fn pong(&mut self, _msg: Pong) -> Reply<(), ()> {
         println!("pong!");
@@ -41,10 +43,10 @@ impl ProcB {
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    let b_pid = node.spawn(ProcB).await;
-    let a_pid = node.spawn(ProcA { b_pid }).await;
+    let ponger_pid = node.spawn(Ponger).await;
+    let pinger_pid = node.spawn(Pinger { ponger_pid }).await;
 
-    node.tell(&a_pid, Ping).await;
+    node.tell(&pinger_pid, Ping).await;
 
     // wait 1s otherwise program will end
     tokio::time::sleep(Duration::from_secs(1)).await;
