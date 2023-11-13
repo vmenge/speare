@@ -11,7 +11,7 @@ use std::{
 use flume::{Sender, TrySendError};
 use tokio::{
     sync::Mutex,
-    task::{self},
+    task::{self, AbortHandle},
     time,
 };
 
@@ -226,17 +226,19 @@ impl Node {
     ///
     /// ```
     /// Learn more on [The Speare Book](https://vmenge.github.io/speare/handlers.html)
-    pub async fn tell_in<P, M>(&self, pid: &Pid<P>, msg: M, delay: Duration)
+    pub async fn tell_in<P, M>(&self, pid: &Pid<P>, msg: M, delay: Duration) -> AbortHandle
     where
         P: 'static + Send + Sync + Process + Handler<M>,
         M: 'static + Send + Sync,
     {
         let node = self.clone();
         let pid = pid.clone();
+
         task::spawn(async move {
             time::sleep(delay).await;
             node.tell(&pid, msg).await;
-        });
+        })
+        .abort_handle()
     }
 
     /// Sends a message to a `Process`, waiting for it to respond.

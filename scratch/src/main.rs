@@ -1,30 +1,23 @@
 use speare::*;
+use std::time::Duration;
 
-struct Ping;
-struct Pong;
+struct SendRequest;
 
-struct ProcA {
-    b_pid: Pid<ProcB>,
-}
+struct HttpRequester;
 
 #[process]
-impl ProcA {
-    #[handler]
-    async fn ping(&mut self, _msg: Ping, ctx: &Ctx<Self>) -> Reply<(), ()> {
-        println!("ping!");
-        ctx.tell(&self.b_pid, Pong).await;
-
-        reply(())
+impl HttpRequester {
+    #[on_init]
+    async fn init(&mut self, ctx: &Ctx<Self>) {
+        ctx.tell(ctx.this(), SendRequest).await;
     }
-}
 
-struct ProcB;
-
-#[process]
-impl ProcB {
     #[handler]
-    async fn pong(&mut self, _msg: Pong) -> Reply<(), ()> {
-        println!("pong!");
+    async fn send_req(&mut self, _msg: SendRequest, ctx: &Ctx<Self>) -> Reply<(), ()> {
+        // http call here
+
+        ctx.tell_in(ctx.this(), SendRequest, Duration::from_secs(3_600))
+            .await;
 
         reply(())
     }
@@ -33,11 +26,5 @@ impl ProcB {
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    let b_pid = node.spawn(ProcB).await;
-    let a_pid = node.spawn(ProcA { b_pid }).await;
-
-    node.tell(&a_pid, Ping).await;
-
-    // ping!
-    // pong!
+    node.spawn(HttpRequester).await;
 }
