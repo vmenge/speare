@@ -170,8 +170,6 @@ pub fn process(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut token_stream = TokenStream::from(process_impl);
     token_stream.extend(handlers_code);
 
-    println!("{}", token_stream);
-
     token_stream
 }
 

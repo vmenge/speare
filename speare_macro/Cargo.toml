@@ -1,6 +1,6 @@
 [package]
 name = "speare_macro"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2021"
 license = "MIT"
 description = "macro to make speare crate easier to use"
