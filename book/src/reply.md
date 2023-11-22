@@ -1,6 +1,6 @@
 # Reply<T,E>
 
-`Reply<T, E>` is the mandary return type for methods annotated with the `#[handler]` proc macro. It's an alias for `Result<Option<T>, E>`, where `T` is the type of a successful return value, and `E` is the error type.
+`Reply<T, E>` is the mandatory return type for methods annotated with the `#[handler]` proc macro. It's an alias for `Result<Option<T>, E>`, where `T` is the type of a successful return value, and `E` is the error type.
 The two main reasons `Reply` was implemented as an alias were:
 - We can represent abscence of a reply by using `Ok(None)`.
 - We can leverage the `Try` trait and use the `?` operator.
@@ -45,7 +45,7 @@ struct Dog {
 #[process]
 impl Dog {
     // the hi Handler specifies that it returns a String as a response,
-    // thus when we the Responder on get_bone, the Reply sent through 
+    // thus when we use the Responder on get_bone, the Reply sent through 
     // it must be a String.
     #[handler]
     async fn hi(&mut self, _msg: SayHi, ctx: &Ctx<Self>) -> Reply<String, ()> {
