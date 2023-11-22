@@ -1,7 +1,7 @@
 use crate::node::{Ctx, EventBus, ExitMessage, MessageSender};
 use async_trait::async_trait;
 use flume::Sender;
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 #[derive(Debug)]
 pub struct Pid<P> {
@@ -74,6 +74,29 @@ where
     Exited,
     NoReply,
     Handler(P::Err),
+}
+
+impl<P, M, E> Display for AskErr<P, M>
+where
+    E: std::fmt::Debug,
+    P: Process + Handler<M, Err = E>,
+    M: Send + Sync,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exited => write!(f, "AskErr::Exited"),
+            Self::NoReply => write!(f, "AskErr::NoReply"),
+            Self::Handler(e) => write!(f, "AskErr::Handler({:?})", e),
+        }
+    }
+}
+
+impl<P, M, E> std::error::Error for AskErr<P, M>
+where
+    E: std::fmt::Debug,
+    P: Process + Handler<M, Err = E> + std::fmt::Debug,
+    M: Send + Sync + std::fmt::Debug,
+{
 }
 
 /// Sends back a value that can be read by a `.ask()` call.
