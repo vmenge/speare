@@ -65,7 +65,6 @@ where
     ) -> Result<Option<Self::Ok>, Self::Err>;
 }
 
-#[derive(Debug)]
 pub enum AskErr<P, M>
 where
     P: Process + Handler<M>,
@@ -76,26 +75,38 @@ where
     Handler(P::Err),
 }
 
-impl<P, M, E> Display for AskErr<P, M>
+impl<P, M> std::fmt::Debug for AskErr<P, M>
 where
-    E: std::fmt::Debug,
-    P: Process + Handler<M, Err = E>,
+    P: Process + Handler<M>,
     M: Send + Sync,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Exited => write!(f, "AskErr::Exited"),
-            Self::NoReply => write!(f, "AskErr::NoReply"),
-            Self::Handler(e) => write!(f, "AskErr::Handler({:?})", e),
+            Self::Exited => write!(f, "Exited"),
+            Self::NoReply => write!(f, "NoReply"),
+            Self::Handler(_) => write!(f, "Handler"),
         }
     }
 }
 
-impl<P, M, E> std::error::Error for AskErr<P, M>
+impl<P, M> Display for AskErr<P, M>
 where
-    E: std::fmt::Debug,
-    P: Process + Handler<M, Err = E> + std::fmt::Debug,
-    M: Send + Sync + std::fmt::Debug,
+    P: Process + Handler<M>,
+    M: Send + Sync,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exited => write!(f, "Process has exited."),
+            Self::NoReply => write!(f, "Process did not reply."),
+            Self::Handler(_) => write!(f, "Process Handler had an error."),
+        }
+    }
+}
+
+impl<P, M> std::error::Error for AskErr<P, M>
+where
+    P: Process + Handler<M>,
+    M: Send + Sync,
 {
 }
 

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use speare::*;
 use std::time::Duration;
 
@@ -26,5 +27,6 @@ impl HttpRequester {
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    node.spawn(HttpRequester).await;
+    let x = node.spawn(HttpRequester).await;
+    let z = node.ask(&x, SendRequest).await.context("yoo");
 }
