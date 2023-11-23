@@ -1,7 +1,7 @@
 use crate::node::{Ctx, EventBus, ExitMessage, MessageSender};
 use async_trait::async_trait;
 use flume::Sender;
-use std::{fmt::Display, marker::PhantomData};
+use std::{any::type_name, fmt::Display, marker::PhantomData};
 
 #[derive(Debug)]
 pub struct Pid<P> {
@@ -148,12 +148,43 @@ where
     }
 }
 
+impl<P> std::fmt::Debug for ExitReason<P>
+where
+    P: Process,
+    P::Error: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Normal => write!(f, "Normal"),
+            Self::Shutdown => write!(f, "Shutdown"),
+            Self::Err(e) => write!(f, "Err({:?})", e),
+        }
+    }
+}
+
 pub struct ExitSignal<P>
 where
     P: Process,
 {
     pid: Pid<P>,
     reason: ExitReason<P>,
+}
+
+impl<P> std::fmt::Debug for ExitSignal<P>
+where
+    P: Process,
+    P::Error: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let full_proc_name = type_name::<P>();
+        let proc_name = full_proc_name.split("::").last().unwrap_or(full_proc_name);
+
+        match &self.reason {
+            ExitReason::Normal => write!(f, "{} ExitReason::Normal", proc_name),
+            ExitReason::Shutdown => write!(f, "{} ExitReason::Shutdown", proc_name),
+            ExitReason::Err(e) => write!(f, "{} ExitReason:: Err({:?})", proc_name, e),
+        }
+    }
 }
 
 impl<P> Clone for ExitSignal<P>

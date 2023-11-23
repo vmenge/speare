@@ -1,25 +1,35 @@
-use anyhow::Context;
-use speare::*;
 use std::time::Duration;
 
-struct SendRequest;
+use speare::*;
 
-struct HttpRequester;
+struct Quitter;
+
+#[process(Error = String)]
+impl Quitter {
+    #[handler]
+    async fn do_it(&mut self, msg: String, ctx: &Ctx<Self>) -> Reply<(), ()> {
+        println!("doing {}", msg);
+
+        ctx.tell_in(ctx.this(), "bla".to_string(), Duration::from_millis(200))
+            .await;
+
+        reply(())
+    }
+}
+
+struct Supervisor(Pid<Quitter>);
 
 #[process]
-impl HttpRequester {
+impl Supervisor {
     #[on_init]
     async fn init(&mut self, ctx: &Ctx<Self>) {
-        ctx.tell(ctx.this(), SendRequest).await;
+        println!("MONITORING!!");
+        ctx.monitor(&self.0);
     }
 
     #[handler]
-    async fn send_req(&mut self, _msg: SendRequest, ctx: &Ctx<Self>) -> Reply<(), ()> {
-        // http call here
-
-        ctx.tell_in(ctx.this(), SendRequest, Duration::from_secs(3_600))
-            .await;
-
+    async fn handle_exit(&mut self, msg: ExitSignal<Quitter>) -> Reply<(), ()> {
+        println!("QUITTING! {:?}", msg);
         reply(())
     }
 }
@@ -27,6 +37,11 @@ impl HttpRequester {
 #[tokio::main]
 async fn main() {
     let node = Node::default();
-    let x = node.spawn(HttpRequester).await;
-    let z = node.ask(&x, SendRequest).await.context("yoo");
+    let quitter = node.spawn(Quitter).await;
+    node.spawn(Supervisor(quitter.clone())).await;
+    node.tell(&quitter, "ble".to_string()).await;
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    node.exit(&quitter, ExitReason::Shutdown).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
