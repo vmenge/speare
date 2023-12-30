@@ -41,16 +41,10 @@ impl Process for Parent {
 
     fn supervision() -> Supervision {
         Supervision::one_for_all()
-            .directive(Directive::Restart {
-                max: None,
-                backoff: Backoff::None,
-            })
+            .directive(Directive::Restart)
             .when(|_: &String| {
                 println!("got string");
-                Directive::Restart {
-                    max: None,
-                    backoff: Backoff::None,
-                }
+                Directive::Restart
             })
             .when(|_: &u8| {
                 println!("got u8!");

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{any::Any, cmp, time::Duration};
+use std::{any::Any, cmp, collections::HashMap, time::Duration};
 use tokio::time;
 
 // questions
@@ -80,7 +80,9 @@ pub struct Supervision {
 impl Supervision {
     pub fn one_for_one() -> Self {
         Self {
-            strategy: Strategy::OneForOne,
+            strategy: Strategy::OneForOne {
+                counter: Default::default(),
+            },
             directive: Directive::Restart,
             max_restarts: None,
             backoff: None,
@@ -90,7 +92,9 @@ impl Supervision {
 
     pub fn one_for_all() -> Self {
         Self {
-            strategy: Strategy::OneForOne,
+            strategy: Strategy::OneForOne {
+                counter: Default::default(),
+            },
             directive: Directive::Restart,
             max_restarts: None,
             backoff: None,
@@ -129,10 +133,18 @@ impl Supervision {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+type ProcessId = u64;
+type RestartCount = u32;
+
+#[derive(Clone, Debug)]
 pub enum Strategy {
-    OneForOne,
-    OneForAll,
+    OneForOne {
+        counter: HashMap<ProcessId, RestartCount>,
+    },
+
+    OneForAll {
+        counter: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,23 +165,21 @@ pub enum Backoff {
 
 pub struct Handle<Msg> {
     msg_tx: Sender<Msg>,
-    directive_tx: Sender<(Strategy, Directive)>,
+    proc_msg_tx: Sender<ProcMsg>,
 }
 
 impl<Msg> Clone for Handle<Msg> {
     fn clone(&self) -> Self {
         Self {
             msg_tx: self.msg_tx.clone(),
-            directive_tx: self.directive_tx.clone(),
+            proc_msg_tx: self.proc_msg_tx.clone(),
         }
     }
 }
 
 impl<Msg> Handle<Msg> {
     pub fn stop(&self) {
-        let _ = self
-            .directive_tx
-            .send((Strategy::OneForAll, Directive::Stop));
+        let _ = self.proc_msg_tx.send(ProcMsg::FromHandle(ProcAction::Stop));
     }
 
     pub fn is_alive(&self) -> bool {
@@ -185,13 +195,15 @@ pub struct Ctx<P>
 where
     P: Process,
 {
+    id: u64,
     props: P::Props,
     handle: Handle<P::Msg>,
     msg_rx: Receiver<P::Msg>,
-    parent_directive_tx: Sender<(Strategy, Directive)>,
-    directive_rx: Receiver<(Strategy, Directive)>,
-    children_directive_tx: Vec<Sender<(Strategy, Directive)>>,
-    restarts: u32,
+    parent_proc_msg_tx: Sender<ProcMsg>,
+    prox_msg_rx: Receiver<ProcMsg>,
+    children_proc_msg_tx: HashMap<u64, Sender<ProcMsg>>,
+    supervision: Supervision,
+    total_children: u64,
 }
 
 impl<P> Ctx<P>
@@ -210,66 +222,111 @@ where
     where
         Child: Process,
     {
+        self.total_children += 1;
         let (msg_tx, msg_rx) = flume::unbounded(); // child
         let (directive_tx, directive_rx) = flume::unbounded(); // child
 
         let handle = Handle {
             msg_tx,
-            directive_tx,
+            proc_msg_tx: directive_tx,
         };
 
         let ctx: Ctx<Child> = Ctx {
+            id: self.total_children,
             props,
             handle: handle.clone(),
             msg_rx,
-            parent_directive_tx: self.handle.directive_tx.clone(),
-            directive_rx,
-            children_directive_tx: Default::default(),
-            restarts: 0,
+            parent_proc_msg_tx: self.handle.proc_msg_tx.clone(),
+            prox_msg_rx: directive_rx,
+            children_proc_msg_tx: Default::default(),
+            total_children: 0,
+            supervision: Child::supervision(),
         };
 
         spawn::<P, Child>(ctx, None);
 
-        self.children_directive_tx.push(handle.directive_tx.clone());
+        self.children_proc_msg_tx
+            .insert(self.total_children, handle.proc_msg_tx.clone());
 
         handle
     }
 
-    async fn handle_err<Parent: Process>(&self, e: P::Err) -> ProcAction {
-        let sup = Parent::supervision();
-        let e: Box<dyn Any + Send> = Box::new(e);
-        let directive = sup
+    async fn handle_err(&mut self, e: Box<dyn Any + Send>, id: u64) -> Option<()> {
+        let directive = self
+            .supervision
             .deciders
             .iter()
             .find_map(|f| f(&e))
-            .unwrap_or(sup.directive);
+            .unwrap_or(self.supervision.directive);
 
-        match (sup.strategy, directive) {
-            (Strategy::OneForOne, Directive::Restart) => {
-                calc_backoff(sup.max_restarts, sup.backoff, self.restarts)
-                    .map(ProcAction::RestartIn)
-                    .unwrap_or_else(|| match directive {
-                        Directive::Stop => ProcAction::Stop,
-                        _ => ProcAction::Nothing,
-                    })
+        match (&mut self.supervision.strategy, directive) {
+            (Strategy::OneForOne { counter }, Directive::Restart) => {
+                let child = self.children_proc_msg_tx.get(&id)?;
+                let child_restarts = counter.entry(id).or_default();
+
+                let delay = calc_backoff(
+                    self.supervision.max_restarts,
+                    self.supervision.backoff,
+                    *child_restarts,
+                )?;
+
+                *child_restarts += 1;
+
+                let _ = child.send(ProcMsg::FromParent(ProcAction::RestartIn(delay)));
             }
 
-            (Strategy::OneForOne, Directive::Stop) => ProcAction::Stop,
-
-            (Strategy::OneForAll, directive) => {
-                let _ = self.parent_directive_tx.send((sup.strategy, directive));
-                time::sleep(Duration::ZERO).await;
-                ProcAction::Nothing
+            (Strategy::OneForOne { counter }, Directive::Stop) => {
+                let child = self.children_proc_msg_tx.get(&id)?;
+                let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
+                counter.remove(&id);
+                self.children_proc_msg_tx.remove(&id);
             }
 
-            _ => ProcAction::Nothing,
-        }
+            (Strategy::OneForAll { counter }, Directive::Restart) => {
+                let delay = calc_backoff(
+                    self.supervision.max_restarts,
+                    self.supervision.backoff,
+                    *counter,
+                )?;
+
+                *counter += 1;
+
+                for child in self.children_proc_msg_tx.values() {
+                    let _ = child.send(ProcMsg::FromParent(ProcAction::RestartIn(delay)));
+                }
+            }
+
+            (Strategy::OneForAll { .. }, Directive::Stop) => {
+                for child in self.children_proc_msg_tx.values() {
+                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
+                }
+
+                self.children_proc_msg_tx.clear();
+            }
+
+            (_, Directive::Resume) => (),
+        };
+
+        time::sleep(Duration::ZERO).await;
+
+        None
     }
+}
+
+#[allow(clippy::enum_variant_names)]
+enum ProcMsg {
+    FromChild {
+        child_id: u64,
+        err: Box<dyn Any + Send>,
+        ack: Sender<()>,
+    },
+
+    FromParent(ProcAction),
+    FromHandle(ProcAction),
 }
 
 enum ProcAction {
     RestartIn(Duration),
-    Nothing,
     Stop,
 }
 
@@ -302,12 +359,17 @@ where
             time::sleep(d).await;
         }
 
+        // TODO: keep restart count per child
         match Child::init(&mut ctx).await {
-            Err(e) => match ctx.handle_err::<Parent>(e).await {
-                ProcAction::Nothing => (),
-                ProcAction::Stop => (),
-                ProcAction::RestartIn(delay) => spawn::<Parent, Child>(ctx, Some(delay)),
-            },
+            Err(e) => {
+                let (tx, rx) = flume::unbounded();
+                let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
+                    child_id: ctx.id,
+                    err: Box::new(e),
+                    ack: tx,
+                });
+                let _ = rx.recv_async().await;
+            }
 
             Ok(mut process) => {
                 let mut delay = None;
@@ -316,13 +378,13 @@ where
                     tokio::select! {
                         biased;
 
-                        directive = ctx.directive_rx.recv_async() => {
-                            match directive {
+                        proc_msg = ctx.prox_msg_rx.recv_async() => {
+                            match proc_msg {
                                 Err(_) => break,
 
-                                Ok((_, Directive::Stop)) => {
-                                    for child in &ctx.children_directive_tx {
-                                        let _ = child.send((Strategy::OneForOne, Directive::Stop));
+                                Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
+                                    for child in ctx.children_proc_msg_tx.values() {
+                                        let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
                                     }
 
                                     time::sleep(Duration::ZERO).await;
@@ -330,20 +392,17 @@ where
                                     break
                                 },
 
-                                // escalated from child
-                                Ok((Strategy::OneForAll, Directive::Restart)) => {
-                                    for child in &ctx.children_directive_tx {
-                                        let _ = child.send((Strategy::OneForOne, Directive::Restart ));
-                                    }
-                                 },
-
-                                // received from parent
-                                Ok((Strategy::OneForOne, Directive::Restart)) => {
-                                    delay = calc_backoff(max, backoff, ctx.restarts);
+                                Ok(ProcMsg::FromParent(ProcAction::RestartIn(dur))) => {
+                                    delay = Some(dur);
                                     break;
-                                 },
+                                }
 
-                                Ok((_, Directive::Resume)) => ()
+                                Ok(ProcMsg::FromChild { child_id, err, ack }) => {
+                                    ctx.handle_err(err, child_id).await;
+                                    let _ = ack.send(());
+                                }
+
+                                Ok(_) => ()
                             }
                         }
 
@@ -353,14 +412,13 @@ where
 
                                 Ok(msg) => {
                                     if let Err(e) = process.handle(msg, &mut ctx).await {
-                                        match ctx.handle_err::<Parent>(e).await {
-                                            ProcAction::Nothing => (),
-                                            ProcAction::Stop => break,
-                                            ProcAction::RestartIn(del) => {
-                                                delay = Some(del);
-                                                break;
-                                            }
-                                        };
+                                        let (tx, rx) = flume::unbounded();
+                                        let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
+                                            child_id: ctx.id,
+                                            err: Box::new(e),
+                                            ack: tx,
+                                        });
+                                        let _ = rx.recv_async().await;
                                     };
                                 }
                             }
@@ -380,13 +438,13 @@ where
 
 #[derive(Default)]
 pub struct Node {
-    children_directive_tx: Vec<Sender<(Strategy, Directive)>>,
+    children_directive_tx: Vec<Sender<ProcMsg>>,
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
         for directive_tx in &self.children_directive_tx {
-            let _ = directive_tx.send((Strategy::OneForAll, Directive::Stop));
+            let _ = directive_tx.send(ProcMsg::FromHandle(ProcAction::Stop));
         }
     }
 }
@@ -402,17 +460,19 @@ impl Node {
 
         let handle = Handle {
             msg_tx,
-            directive_tx,
+            proc_msg_tx: directive_tx,
         };
 
         let mut ctx: Ctx<P> = Ctx {
+            id: 0,
+            total_children: 0,
             props,
             handle: handle.clone(),
             msg_rx,
-            parent_directive_tx: ignore,
-            directive_rx,
-            children_directive_tx: Default::default(),
-            restarts: 0,
+            parent_proc_msg_tx: ignore,
+            prox_msg_rx: directive_rx,
+            children_proc_msg_tx: Default::default(),
+            supervision: P::supervision(),
         };
 
         tokio::spawn(async move {
@@ -424,18 +484,18 @@ impl Node {
                         tokio::select! {
                             biased;
 
-                            directive = ctx.directive_rx.recv_async() => {
-                                match directive {
+                            proc_msg = ctx.prox_msg_rx.recv_async() => {
+                                match proc_msg {
                                     Err(_) => break,
 
-                                    Ok((_, Directive::Stop)) => break,
-
-                                    // escalated from child
-                                    Ok((Strategy::OneForAll, Directive::Restart { max, backoff })) => {
-                                        for child in &ctx.children_directive_tx {
-                                            let _ = child.send((Strategy::OneForOne, Directive::Restart { max, backoff }));
-                                        }
+                                    Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
+                                        break
                                     },
+
+                                    Ok(ProcMsg::FromChild { child_id, err, ack }) => {
+                                        ctx.handle_err(err, child_id).await;
+                                        let _ = ack.send(());
+                                    }
 
                                     _ => {}
                                 }
@@ -456,14 +516,14 @@ impl Node {
                     }
 
                     process.exit(&mut ctx).await;
-                    for child in ctx.children_directive_tx {
-                        let _ = child.send((Strategy::OneForOne, Directive::Stop));
+                    for child in ctx.children_proc_msg_tx.values() {
+                        let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
                     }
                 }
             }
         });
 
-        self.children_directive_tx.push(handle.directive_tx.clone());
+        self.children_directive_tx.push(handle.proc_msg_tx.clone());
 
         handle
     }
