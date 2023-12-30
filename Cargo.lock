@@ -251,6 +251,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple"
+version = "0.0.12"
+dependencies = [
+ "async-trait",
+ "flume",
+ "tokio",
+]
+
+[[package]]
 name = "speare"
 version = "0.0.12"
 dependencies = [
