@@ -1,3 +1,5 @@
+## DEPRECATED
+
 # speare_macro
 
 This crate's sole purpose is to reduce the amount of boilerplate needed when working with the `speare` crate.
