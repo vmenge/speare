@@ -456,6 +456,19 @@ impl<Msg> Handle<Msg> {
         let _ = self.msg_tx.send(msg.into());
     }
 
+    pub fn send_in<M>(&self, msg: M, duration: Duration)
+    where
+        Msg: 'static + Send,
+        M: 'static + Send + Into<Msg>,
+    {
+        let msg_tx = self.msg_tx.clone();
+
+        task::spawn(async move {
+            time::sleep(duration).await;
+            let _ = msg_tx.send(msg.into());
+        });
+    }
+
     pub async fn req<Req, Res>(&self, req: Req) -> Result<Res, ReqErr>
     where
         Msg: From<Request<Req, Res>>,

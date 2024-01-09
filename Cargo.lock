@@ -255,22 +255,12 @@ checksum = "b97ed7a9823b74f99c7742f5336af7be5ecd3eeafcb1507d1fa93347b1d589b0"
 
 [[package]]
 name = "speare"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "derive_more",
  "flume",
- "speare_macro",
  "tokio",
-]
-
-[[package]]
-name = "speare_macro"
-version = "0.0.7"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.38",
 ]
 
 [[package]]
