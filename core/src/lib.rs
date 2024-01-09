@@ -1,6 +1,12 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{any::Any, cmp, collections::HashMap, fmt, time::Duration};
+use std::{
+    any::{type_name, Any},
+    cmp,
+    collections::HashMap,
+    fmt,
+    time::Duration,
+};
 use tokio::{
     task,
     time::{self, Instant},
@@ -226,7 +232,7 @@ impl Supervision {
     ///
     /// // Maximum of 3 restarts in a 1 seconds timespan.
     /// Supervision::one_for_one()
-    ///     .max_restarts(Limit::Within { amount: 3, duration: Duration::from_secs(1) });
+    ///     .max_restarts(Limit::Within { amount: 3, timespan: Duration::from_secs(1) });
     ///
     /// Supervision::one_for_one()
     ///     .max_restarts((3, Duration::from_secs(1)));
@@ -370,7 +376,7 @@ impl RestartCount {
                 if self.last_restart + timespan > Instant::now() {
                     (self.count < amount, self.count + 1)
                 } else {
-                    (true, 0)
+                    (true, 1)
                 }
             }
         };
@@ -605,7 +611,7 @@ where
                 let (tx, _) = flume::unbounded();
                 let _ = self.parent_proc_msg_tx.send(ProcMsg::FromChild {
                     child_id: self.id,
-                    err: Box::new(e),
+                    err: e,
                     ack: tx,
                 });
             }

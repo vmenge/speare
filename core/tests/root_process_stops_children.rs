@@ -89,6 +89,7 @@ async fn root_process_quits_without_supervision_on_error() {
     let quit_on_start = true;
     let quitter2 = node.spawn::<Quitter>(quit_on_start);
     task::yield_now().await;
+    task::yield_now().await;
 
     // Assert
     assert!(!quitter2.is_alive());

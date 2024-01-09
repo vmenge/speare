@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use derive_more::From;
-use speare::{Ctx, Process, Request};
+use speare::{req_res, Ctx, Directive, Handle, Node, Process, Request, Supervision};
+use std::time::Duration;
+use tokio::{task, time};
+mod sync_vec;
 
 struct Child {
     count: u32,
@@ -37,11 +40,7 @@ impl Process for Child {
 }
 
 mod one_for_one {
-    use crate::{Child, ChildMsg};
-    use async_trait::async_trait;
-    use speare::{req_res, Ctx, Directive, Handle, Node, Process, Request, Supervision};
-    use std::time::Duration;
-    use tokio::{task, time};
+    use super::*;
 
     struct MaxResetAmount {
         child: Handle<ChildMsg>,
@@ -146,42 +145,38 @@ mod one_for_one {
         // No restarts, should be alive
         assert!(child.is_alive());
 
+        // 1st restart, should be alive
         kill().await;
-        // 1 restart, should be alive
         assert!(child.is_alive());
 
         time::pause();
         time::advance(Duration::from_secs(10)).await;
         time::resume();
 
+        // 1st restart, Should still be alive as restart counter was reset after timespan passed
         kill().await;
-        // Should still be alive as restart counter was reset after timespan passed
         assert!(child.is_alive());
 
+        // 2nd restart, should be dead as we didn't advance time and restart limit within timespan was reached
         kill().await;
-        // 1 restart, should be alive
-        assert!(child.is_alive());
-
-        kill().await;
-        // 2 restart, should be dead as we didn't advance time and restart limit within timespan was reached
         assert!(!child.is_alive());
     }
 
     #[derive(Clone)]
-    struct Root {
+    struct Parent {
         child0: Handle<ChildMsg>,
         child1: Handle<ChildMsg>,
         child2: Handle<ChildMsg>,
     }
 
     #[async_trait]
-    impl Process for Root {
+    impl Process for Parent {
         type Props = ();
-        type Msg = Request<(), Root>;
+        type Msg = Request<(), Parent>;
         type Err = ();
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            Ok(Root {
+            Ok(Parent {
                 child0: ctx.spawn::<Child>(0),
                 child1: ctx.spawn::<Child>(1),
                 child2: ctx.spawn::<Child>(2),
@@ -206,11 +201,11 @@ mod one_for_one {
     async fn one_for_one_only_affects_failing_process() {
         // Arrange
         let mut node = Node::default();
-        let root = node.spawn::<Root>(());
+        let root = node.spawn::<Parent>(());
 
         let (req, res) = req_res(());
         root.send(req);
-        let Root {
+        let Parent {
             child0,
             child1,
             child2,
@@ -253,19 +248,410 @@ mod one_for_one {
         );
     }
 
+    struct EscalateRoot {
+        errs: Vec<String>,
+    }
+
+    #[derive(From)]
+    enum EscalateRootMsg {
+        Push(String),
+        GetErrs(Request<(), Vec<String>>),
+    }
+
+    #[async_trait]
+    impl Process for EscalateRoot {
+        type Props = ();
+        type Msg = EscalateRootMsg;
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            ctx.spawn::<EscalateParent>(ctx.this().clone());
+            Ok(Self { errs: vec![] })
+        }
+
+        async fn handle(&mut self, msg: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            match msg {
+                EscalateRootMsg::Push(err) => self.errs.push(err),
+                EscalateRootMsg::GetErrs(req) => req.reply(self.errs.clone()),
+            }
+
+            Ok(())
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_one()
+                .when(|e: &EscalateChildErr| {
+                    e.0.send(EscalateRootMsg::Push("EscalateChildErr".to_string()));
+                    Directive::Resume
+                })
+                .when(|e: &EscalateParentErr| {
+                    e.0.send(EscalateRootMsg::Push("EscalateParentErr".to_string()));
+                    Directive::Resume
+                })
+        }
+    }
+
+    struct EscalateParent;
+
+    #[derive(From)]
+    struct EscalateParentErr(Handle<EscalateRootMsg>);
+
+    #[async_trait]
+    impl Process for EscalateParent {
+        type Props = Handle<EscalateRootMsg>;
+        type Msg = ();
+        type Err = EscalateParentErr;
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            ctx.spawn::<EscalateChild>(ctx.props().clone());
+            Ok(Self)
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_one().directive(Directive::Escalate)
+        }
+    }
+
+    struct EscalateChild;
+
+    #[derive(From)]
+    struct EscalateChildErr(Handle<EscalateRootMsg>);
+
+    #[async_trait]
+    impl Process for EscalateChild {
+        type Props = Handle<EscalateRootMsg>;
+        type Msg = ();
+        type Err = EscalateChildErr;
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            Err(ctx.props().clone().into())
+        }
+    }
+
     #[tokio::test]
-    async fn escalates_error() {}
+    async fn escalates_error() {
+        // Arrange
+        let mut node = Node::default();
+
+        // Act
+        let root = node.spawn::<EscalateRoot>(());
+        task::yield_now().await;
+        let errors = root.req(()).await.unwrap();
+
+        // Assert
+        assert_eq!(errors, vec!["EscalateChildErr".to_string()])
+    }
 }
 
 mod one_for_all {
-    #[tokio::test]
-    async fn reaches_max_reset_limit() {}
-    #[tokio::test]
-    async fn resets_max_reset_limit_after_duration() {}
+    use super::*;
+
+    #[derive(Clone)]
+    struct MaxResetAmount {
+        child0: Handle<ChildMsg>,
+        child1: Handle<ChildMsg>,
+    }
+
+    #[async_trait]
+    impl Process for MaxResetAmount {
+        type Props = ();
+        type Msg = Request<(), Self>;
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            Ok(MaxResetAmount {
+                child0: ctx.spawn::<Child>(0),
+                child1: ctx.spawn::<Child>(1),
+            })
+        }
+
+        async fn handle(&mut self, req: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            req.reply(self.clone());
+            Ok(())
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_all().max_restarts(2)
+        }
+    }
 
     #[tokio::test]
-    async fn resets_child_state_if_parent_restarts() {}
+    async fn reaches_max_reset_limit_and_shuts_down_process() {
+        // Arrange
+        let mut node = Node::default();
+        let max_reset = node.spawn::<MaxResetAmount>(());
+
+        let (req, res) = req_res(());
+        max_reset.send(req);
+        let MaxResetAmount { child0, child1 } = res.recv().await.unwrap();
+
+        // Act & Assert
+
+        // No restarts, should be alive
+        assert!(child0.is_alive());
+        assert!(child1.is_alive());
+
+        // 1st restart, should be alive
+        child0.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+        assert!(child0.is_alive());
+        assert!(child1.is_alive());
+
+        // 2nd restart, should be alive
+        child1.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+        assert!(child0.is_alive());
+        assert!(child1.is_alive());
+
+        // 3rd restart, should be dead
+        child0.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+        assert!(!child0.is_alive());
+        assert!(!child1.is_alive());
+    }
+
+    #[derive(Clone)]
+    struct MaxResetWithin {
+        child0: Handle<ChildMsg>,
+        child1: Handle<ChildMsg>,
+    }
+
+    #[async_trait]
+    impl Process for MaxResetWithin {
+        type Props = ();
+        type Msg = Request<(), Self>;
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            Ok(MaxResetWithin {
+                child0: ctx.spawn::<Child>(0),
+                child1: ctx.spawn::<Child>(1),
+            })
+        }
+
+        async fn handle(&mut self, req: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            req.reply(self.clone());
+            Ok(())
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_all().max_restarts((1, Duration::from_secs(1)))
+        }
+    }
 
     #[tokio::test]
-    async fn escalates_error() {}
+    async fn shuts_down_process_only_if_reset_limit_is_reached_within_duration() {
+        // Arrange
+        let mut node = Node::default();
+        let max_reset = node.spawn::<MaxResetWithin>(());
+
+        let (req, res) = req_res(());
+        max_reset.send(req);
+        let MaxResetWithin { child0, child1 } = res.recv().await.unwrap();
+
+        // Act & Assert
+
+        // No restarts, should be alive
+        assert!(child0.is_alive());
+        assert!(child1.is_alive());
+
+        // 1st restart, should be alive
+        child0.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+        assert!(child0.is_alive());
+
+        time::pause();
+        time::advance(Duration::from_secs(10)).await;
+        time::resume();
+
+        // 1st restart, should still be alive as restart counter was reset after timespan passed
+        child1.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+        assert!(child0.is_alive());
+        assert!(child1.is_alive());
+
+        // 2nd restart, should be dead as we didn't advance time and restart limit within timespan was reached
+        child0.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+        assert!(!child0.is_alive());
+        assert!(!child1.is_alive());
+    }
+
+    #[derive(Clone)]
+    struct Parent {
+        child0: Handle<ChildMsg>,
+        child1: Handle<ChildMsg>,
+        child2: Handle<ChildMsg>,
+    }
+
+    #[async_trait]
+    impl Process for Parent {
+        type Props = ();
+        type Msg = Request<(), Parent>;
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            Ok(Parent {
+                child0: ctx.spawn::<Child>(0),
+                child1: ctx.spawn::<Child>(1),
+                child2: ctx.spawn::<Child>(2),
+            })
+        }
+
+        async fn handle(&mut self, req: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            req.reply(self.clone());
+            Ok(())
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_all().when(|e: &u32| match e {
+                0 => Directive::Resume,
+                1 => Directive::Restart,
+                _ => Directive::Stop,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn one_for_one_only_affects_failing_process() {
+        // Arrange
+        let mut node = Node::default();
+        let root = node.spawn::<Parent>(());
+
+        let (req, res) = req_res(());
+        root.send(req);
+        let Parent {
+            child0,
+            child1,
+            child2,
+        } = res.recv().await.unwrap();
+
+        child0.send(ChildMsg::Count);
+        child1.send(ChildMsg::Count);
+        child1.send(ChildMsg::Count);
+        child2.send(ChildMsg::Count);
+        child2.send(ChildMsg::Count);
+        child2.send(ChildMsg::Count);
+
+        let counts =
+            || async { tokio::try_join!(child0.req(()), child1.req(()), child2.req(()),).unwrap() };
+
+        assert_eq!(counts().await, (1, 2, 3));
+
+        // Act & Assert
+
+        // Fail child0, all counts should be unaffected
+        child0.send(ChildMsg::Fail);
+        task::yield_now().await;
+
+        assert_eq!(counts().await, (1, 2, 3));
+
+        // Fail child1, all counts should go back to 0
+        child1.send(ChildMsg::Fail);
+        task::yield_now().await;
+
+        assert_eq!(counts().await, (0, 0, 0));
+
+        // Fail child2, all Processes should stop
+        child2.send(ChildMsg::Fail);
+        time::sleep(Duration::from_nanos(1)).await;
+
+        assert!(!child0.is_alive());
+        assert!(!child1.is_alive());
+        assert!(!child2.is_alive());
+    }
+
+    struct EscalateRoot {
+        errs: Vec<String>,
+    }
+
+    #[derive(From)]
+    enum EscalateRootMsg {
+        Push(String),
+        GetErrs(Request<(), Vec<String>>),
+    }
+
+    #[async_trait]
+    impl Process for EscalateRoot {
+        type Props = ();
+        type Msg = EscalateRootMsg;
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            ctx.spawn::<EscalateParent>(ctx.this().clone());
+            Ok(Self { errs: vec![] })
+        }
+
+        async fn handle(&mut self, msg: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            match msg {
+                EscalateRootMsg::Push(err) => self.errs.push(err),
+                EscalateRootMsg::GetErrs(req) => req.reply(self.errs.clone()),
+            }
+
+            Ok(())
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_all()
+                .when(|e: &EscalateChildErr| {
+                    e.0.send(EscalateRootMsg::Push("EscalateChildErr".to_string()));
+                    Directive::Resume
+                })
+                .when(|e: &EscalateParentErr| {
+                    e.0.send(EscalateRootMsg::Push("EscalateParentErr".to_string()));
+                    Directive::Resume
+                })
+        }
+    }
+
+    struct EscalateParent;
+
+    #[derive(From)]
+    struct EscalateParentErr(Handle<EscalateRootMsg>);
+
+    #[async_trait]
+    impl Process for EscalateParent {
+        type Props = Handle<EscalateRootMsg>;
+        type Msg = ();
+        type Err = EscalateParentErr;
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            ctx.spawn::<EscalateChild>(ctx.props().clone());
+            Ok(Self)
+        }
+
+        fn supervision() -> Supervision {
+            Supervision::one_for_one().directive(Directive::Escalate)
+        }
+    }
+
+    struct EscalateChild;
+
+    #[derive(From)]
+    struct EscalateChildErr(Handle<EscalateRootMsg>);
+
+    #[async_trait]
+    impl Process for EscalateChild {
+        type Props = Handle<EscalateRootMsg>;
+        type Msg = ();
+        type Err = EscalateChildErr;
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            Err(ctx.props().clone().into())
+        }
+    }
+
+    #[tokio::test]
+    async fn escalates_error() {
+        // Arrange
+        let mut node = Node::default();
+
+        // Act
+        let root = node.spawn::<EscalateRoot>(());
+        task::yield_now().await;
+        let errors = root.req(()).await.unwrap();
+
+        // Assert
+        assert_eq!(errors, vec!["EscalateChildErr".to_string()])
+    }
 }
