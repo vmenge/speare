@@ -59,6 +59,17 @@ pub enum ReqErr {
     Timeout,
 }
 
+impl fmt::Display for ReqErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Failure => write!(f, "Request object dropped before replying."),
+            Self::Timeout => write!(f, "Timed out before receiving response."),
+        }
+    }
+}
+
+impl std::error::Error for ReqErr {}
+
 impl<Res> Response<Res> {
     pub async fn recv(self) -> Result<Res, ReqErr> {
         self.rx.recv_async().await.map_err(|_| ReqErr::Failure)
