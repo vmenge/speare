@@ -528,6 +528,11 @@ where
         &self.handle
     }
 
+    /// Clears all the messages from the mailbox.
+    pub fn clear_mailbox(&self) {
+        self.msg_rx.drain();
+    }
+
     /// Spawns and supervises a child `Process`.
     /// ## Examples
     ///
