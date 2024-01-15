@@ -1,6 +1,6 @@
 mod sync_vec;
 use async_trait::async_trait;
-use speare::{Ctx, Node, Process};
+use speare::{Ctx, ExitReason, Node, Process};
 use sync_vec::SyncVec;
 use tokio::task;
 
@@ -30,7 +30,7 @@ impl Process for Foo {
         Ok(Foo)
     }
 
-    async fn exit(&mut self, ctx: &mut Ctx<Self>) {
+    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().push(TestMsg::FooQuit).await;
     }
 }
@@ -56,7 +56,7 @@ impl Process for Bar {
         }
     }
 
-    async fn exit(&mut self, ctx: &mut Ctx<Self>) {
+    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().0.push(TestMsg::BarQuit).await;
     }
 }
@@ -75,7 +75,7 @@ impl Process for Child1 {
         Ok(Child1)
     }
 
-    async fn exit(&mut self, ctx: &mut Ctx<Self>) {
+    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().push(TestMsg::Child1Quit).await;
     }
 }
@@ -93,7 +93,7 @@ impl Process for Child2 {
         Ok(Child2)
     }
 
-    async fn exit(&mut self, ctx: &mut Ctx<Self>) {
+    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().push(TestMsg::Child2Quit).await;
     }
 }

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use derive_more::From;
-use speare::{req_res, Ctx, Directive, Handle, Node, Process, Request, Supervision};
+use speare::{req_res, Ctx, Directive, ExitReason, Handle, Node, Process, Request, Supervision};
 use std::time::Duration;
 use tokio::{task, time};
 mod sync_vec;
@@ -36,6 +36,10 @@ impl Process for Child {
         }
 
         Ok(())
+    }
+
+    async fn exit(&mut self, reason: ExitReason<Self>, _: &mut Ctx<Self>) {
+        println!("Child exiting. {:?}", reason);
     }
 }
 
@@ -513,7 +517,7 @@ mod one_for_all {
     }
 
     #[tokio::test]
-    async fn one_for_one_only_affects_failing_process() {
+    async fn one_for_all_affects_all_process() {
         // Arrange
         let mut node = Node::default();
         let root = node.spawn::<Parent>(());

@@ -1,6 +1,14 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{any::Any, cmp, collections::HashMap, fmt, time::Duration};
+use std::{
+    any::{type_name, Any},
+    cmp,
+    collections::HashMap,
+    fmt,
+    ops::Deref,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     task,
     time::{self, Instant},
@@ -87,11 +95,11 @@ pub fn req_res<Req, Res>(req: Req) -> (Request<Req, Res>, Response<Res>) {
 pub trait Process: Sized + Send + 'static {
     type Props: Send + Sync + 'static;
     type Msg: Send + 'static;
-    type Err: Send + 'static;
+    type Err: Send + Sync + 'static;
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err>;
 
-    async fn exit(&mut self, ctx: &mut Ctx<Self>) {}
+    async fn exit(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {}
 
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         Ok(())
@@ -99,6 +107,100 @@ pub trait Process: Sized + Send + 'static {
 
     fn supervision(props: &Self::Props) -> Supervision {
         Supervision::one_for_one()
+    }
+}
+
+pub struct SharedErr<E> {
+    err: Arc<E>,
+}
+
+impl<E> SharedErr<E> {
+    pub fn new(e: E) -> Self {
+        Self { err: Arc::new(e) }
+    }
+}
+
+impl<E> Clone for SharedErr<E> {
+    fn clone(&self) -> Self {
+        Self {
+            err: self.err.clone(),
+        }
+    }
+}
+
+impl<E> Deref for SharedErr<E> {
+    type Target = E;
+
+    fn deref(&self) -> &Self::Target {
+        let name = type_name::<E>();
+        println!("deref called on {name}!");
+        self.err.deref()
+    }
+}
+
+impl<E> AsRef<E> for SharedErr<E> {
+    fn as_ref(&self) -> &E {
+        let name = type_name::<E>();
+        println!("asref called on {name}!");
+        self.err.as_ref()
+    }
+}
+
+impl<E> fmt::Debug for SharedErr<E>
+where
+    E: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.err.as_ref())
+    }
+}
+
+impl<E> fmt::Display for SharedErr<E>
+where
+    E: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.err.as_ref())
+    }
+}
+
+pub enum ExitReason<P>
+where
+    P: Process,
+{
+    /// Process exited due to manual request through a `Handle<P>`
+    Handle,
+    /// Process exited due to a request from its Parent process as a part of its supervision strategy.
+    Parent,
+    /// Procss exited due to error.
+    Err(SharedErr<P::Err>),
+}
+
+impl<P> fmt::Debug for ExitReason<P>
+where
+    P: Process,
+    P::Err: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Handle => write!(f, "ExitReason::Handle"),
+            Self::Parent => write!(f, "ExitReason::Parent"),
+            Self::Err(arg0) => write!(f, "ExitReason::Err({:?})", arg0),
+        }
+    }
+}
+
+impl<P> fmt::Display for ExitReason<P>
+where
+    P: Process,
+    P::Err: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Handle => write!(f, "Process exited due to manual request through Handle::stop"),
+            Self::Parent => write!(f, "Process exited due to a request from its Parent process as a part of its supervision strategy"),
+            Self::Err(e) => write!(f, "Process exited due to error: {e}"),
+        }
     }
 }
 
@@ -338,7 +440,7 @@ impl Supervision {
         F: 'static + Send + Sync + Fn(&E) -> Directive,
     {
         let closure = move |any_e: &Box<dyn Any + Send>| {
-            let e: &E = any_e.downcast_ref()?;
+            let e: &SharedErr<E> = any_e.downcast_ref()?;
             Some(f(e))
         };
 
@@ -569,7 +671,7 @@ where
         handle
     }
 
-    async fn handle_err(&mut self, e: Box<dyn Any + Send>, id: u64) -> Option<()> {
+    async fn handle_err(&mut self, e: Box<dyn Any + Send>, proc_id: u64) -> Option<()> {
         let directive = self
             .supervision
             .deciders
@@ -579,8 +681,8 @@ where
 
         match (&mut self.supervision.strategy, directive) {
             (Strategy::OneForOne { counter }, Directive::Restart) => {
-                let child = self.children_proc_msg_tx.get(&id)?;
-                let child_restarts = counter.entry(id).or_default();
+                let child = self.children_proc_msg_tx.get(&proc_id)?;
+                let child_restarts = counter.entry(proc_id).or_default();
 
                 match child_restarts
                     .get_backoff_duration(self.supervision.max_restarts, self.supervision.backoff)
@@ -592,16 +694,16 @@ where
                     None => {
                         // Stop child if max number of resets have been reached
                         let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                        self.children_proc_msg_tx.remove(&id);
+                        self.children_proc_msg_tx.remove(&proc_id);
                     }
                 }
             }
 
             (Strategy::OneForOne { counter }, Directive::Stop) => {
-                let child = self.children_proc_msg_tx.get(&id)?;
+                let child = self.children_proc_msg_tx.get(&proc_id)?;
                 let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                counter.remove(&id);
-                self.children_proc_msg_tx.remove(&id);
+                counter.remove(&proc_id);
+                self.children_proc_msg_tx.remove(&proc_id);
             }
 
             (Strategy::OneForAll { counter }, Directive::Restart) => {
@@ -681,13 +783,12 @@ where
 
         let mut restart_in = None;
 
-        // TODO: keep restart count per child
         match Child::init(&mut ctx).await {
             Err(e) => {
                 let (tx, rx) = flume::unbounded();
                 let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
                     child_id: ctx.id,
-                    err: Box::new(e),
+                    err: Box::new(SharedErr::new(e)),
                     ack: tx,
                 });
                 let _ = rx.recv_async().await;
@@ -715,6 +816,8 @@ where
             }
 
             Ok(mut process) => {
+                let mut exit_reason = None;
+
                 loop {
                     tokio::select! {
                         biased;
@@ -723,11 +826,18 @@ where
                             match proc_msg {
                                 Err(_) => break,
 
-                                Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
+                                Ok(ProcMsg::FromHandle(ProcAction::Stop) ) => {
+                                    exit_reason = Some(ExitReason::Handle);
+                                    break
+                                },
+
+                                Ok( ProcMsg::FromParent(ProcAction::Stop)) => {
+                                    exit_reason = exit_reason.or(Some(ExitReason::Parent));
                                     break
                                 },
 
                                 Ok(ProcMsg::FromParent(ProcAction::RestartIn(dur))) => {
+                                    exit_reason = exit_reason.or(Some(ExitReason::Parent));
                                     restart_in = Some(dur);
                                     break;
                                 }
@@ -747,10 +857,12 @@ where
 
                                 Ok(msg) => {
                                     if let Err(e) = process.handle(msg, &mut ctx).await {
+                                        let e = SharedErr::new(e);
+                                        exit_reason = Some(ExitReason::Err(e.clone()));
                                         let (tx, rx) = flume::unbounded();
                                         let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
                                             child_id: ctx.id,
-                                            err: Box::new(e),
+                                            err: Box::new(e.clone()),
                                             ack: tx,
                                         });
                                         let _ = rx.recv_async().await;
@@ -767,7 +879,8 @@ where
 
                 task::yield_now().await;
 
-                process.exit(&mut ctx).await;
+                let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
+                process.exit(exit_reason, &mut ctx).await;
 
                 if restart_in.is_some() {
                     spawn::<Parent, Child>(ctx, restart_in)
@@ -829,6 +942,7 @@ impl Node {
                 }
 
                 Ok(mut process) => {
+                    let mut exit_reason = None;
                     loop {
                         tokio::select! {
                             biased;
@@ -838,6 +952,7 @@ impl Node {
                                     Err(_) => break,
 
                                     Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
+                                        exit_reason = Some(ExitReason::Handle);
                                         break
                                     },
 
@@ -855,7 +970,8 @@ impl Node {
                                     Err(_) => break,
 
                                     Ok(msg) => {
-                                        if  process.handle(msg, &mut ctx).await.is_err() {
+                                        if let Err(e) = process.handle(msg, &mut ctx).await {
+                                            exit_reason = Some(ExitReason::Err(SharedErr::new(e)));
                                             break;
                                         };
                                     }
@@ -870,7 +986,8 @@ impl Node {
 
                     task::yield_now().await;
 
-                    process.exit(&mut ctx).await;
+                    let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
+                    process.exit(exit_reason, &mut ctx).await;
                 }
             }
         });
