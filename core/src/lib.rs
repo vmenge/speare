@@ -197,9 +197,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Handle => write!(f, "Process exited due to manual request through Handle::stop"),
-            Self::Parent => write!(f, "Process exited due to a request from its Parent process as a part of its supervision strategy"),
-            Self::Err(e) => write!(f, "Process exited due to error: {e}"),
+            Self::Handle => write!(f, "manual exit through Handle::stop"),
+            Self::Parent => write!(f, "exit request from parent supervision strategy"),
+            Self::Err(e) => write!(f, "error: {e}"),
         }
     }
 }
