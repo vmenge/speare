@@ -65,7 +65,7 @@ impl Process for Parent {
         Ok(())
     }
 
-    fn supervision() -> Supervision {
+    fn supervision(_: &Self::Props) -> Supervision {
         Supervision::one_for_one()
             .max_restarts(2)
             .when(|e: &FooErr| {

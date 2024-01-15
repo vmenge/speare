@@ -1,12 +1,6 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{
-    any::{type_name, Any},
-    cmp,
-    collections::HashMap,
-    fmt,
-    time::Duration,
-};
+use std::{any::Any, cmp, collections::HashMap, fmt, time::Duration};
 use tokio::{
     task,
     time::{self, Instant},
@@ -103,7 +97,7 @@ pub trait Process: Sized + Send + 'static {
         Ok(())
     }
 
-    fn supervision() -> Supervision {
+    fn supervision(props: &Self::Props) -> Supervision {
         Supervision::one_for_one()
     }
 }
@@ -301,7 +295,7 @@ impl Supervision {
     ///         Ok(Parent)
     ///     }
     ///
-    ///     fn supervision() -> Supervision {
+    ///     fn supervision(props: &Self::Props) -> Supervision {
     ///         Supervision::one_for_all()
     ///             .when(|e: &FooErr| Directive::Restart)
     ///             .when(|e: &BarErr| Directive::Stop)
@@ -553,6 +547,8 @@ where
             proc_msg_tx,
         };
 
+        let supervision = Child::supervision(&props);
+
         let ctx: Ctx<Child> = Ctx {
             id: self.total_children,
             props,
@@ -562,7 +558,7 @@ where
             proc_msg_rx,
             children_proc_msg_tx: Default::default(),
             total_children: 0,
-            supervision: Child::supervision(),
+            supervision,
         };
 
         spawn::<P, Child>(ctx, None);
@@ -808,6 +804,8 @@ impl Node {
             proc_msg_tx: directive_tx,
         };
 
+        let supervision = P::supervision(&props);
+
         let mut ctx: Ctx<P> = Ctx {
             id: 0,
             total_children: 0,
@@ -817,7 +815,7 @@ impl Node {
             parent_proc_msg_tx: ignore,
             proc_msg_rx: directive_rx,
             children_proc_msg_tx: Default::default(),
-            supervision: P::supervision(),
+            supervision,
         };
 
         tokio::spawn(async move {

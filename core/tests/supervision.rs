@@ -63,7 +63,7 @@ mod one_for_one {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_one().max_restarts(2)
         }
     }
@@ -121,7 +121,7 @@ mod one_for_one {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_one().max_restarts((1, Duration::from_secs(1)))
         }
     }
@@ -188,7 +188,7 @@ mod one_for_one {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_one().when(|e: &u32| match e {
                 0 => Directive::Resume,
                 1 => Directive::Restart,
@@ -278,7 +278,7 @@ mod one_for_one {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_one()
                 .when(|e: &EscalateChildErr| {
                     e.0.send(EscalateRootMsg::Push("EscalateChildErr".to_string()));
@@ -307,7 +307,7 @@ mod one_for_one {
             Ok(Self)
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_one().directive(Directive::Escalate)
         }
     }
@@ -370,7 +370,7 @@ mod one_for_all {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_all().max_restarts(2)
         }
     }
@@ -434,7 +434,7 @@ mod one_for_all {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_all().max_restarts((1, Duration::from_secs(1)))
         }
     }
@@ -503,7 +503,7 @@ mod one_for_all {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_all().when(|e: &u32| match e {
                 0 => Directive::Resume,
                 1 => Directive::Restart,
@@ -591,7 +591,7 @@ mod one_for_all {
             Ok(())
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_all()
                 .when(|e: &EscalateChildErr| {
                     e.0.send(EscalateRootMsg::Push("EscalateChildErr".to_string()));
@@ -620,7 +620,7 @@ mod one_for_all {
             Ok(Self)
         }
 
-        fn supervision() -> Supervision {
+        fn supervision(_: &Self::Props) -> Supervision {
             Supervision::one_for_one().directive(Directive::Escalate)
         }
     }
