@@ -348,6 +348,8 @@ mod one_for_one {
 }
 
 mod one_for_all {
+    use crate::sync_vec::SyncVec;
+
     use super::*;
 
     #[derive(Clone)]
@@ -657,5 +659,110 @@ mod one_for_all {
 
         // Assert
         assert_eq!(errors, vec!["EscalateChildErr".to_string()])
+    }
+
+    struct Dad {
+        kid0: Handle<()>,
+    }
+
+    #[async_trait]
+    impl Process for Dad {
+        type Props = SyncVec<String>;
+        type Msg = ();
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            ctx.props().push("Dad::init".to_string()).await;
+            let kid0 = ctx.spawn::<Kid>((0, ctx.props().clone()));
+            ctx.spawn::<Kid>((1, ctx.props().clone()));
+            ctx.spawn::<Kid>((2, ctx.props().clone()));
+
+            Ok(Self { kid0 })
+        }
+
+        async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+            ctx.props().push("Dad::exit".to_string()).await;
+        }
+
+        fn supervision(_: &Self::Props) -> Supervision {
+            Supervision::one_for_all().directive(Directive::Restart)
+        }
+
+        async fn handle(&mut self, _: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            self.kid0.send(());
+            Ok(())
+        }
+    }
+
+    struct Kid;
+
+    #[async_trait]
+    impl Process for Kid {
+        type Props = (Id, SyncVec<String>);
+        type Msg = ();
+        type Err = ();
+
+        async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+            let (id, evts) = ctx.props();
+            evts.push(format!("Kid{id}::init")).await;
+            Ok(Self)
+        }
+
+        async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+            let (id, evts) = ctx.props();
+            evts.push(format!("Kid{id}::exit")).await;
+        }
+
+        async fn handle(&mut self, _: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
+            Err(())
+        }
+    }
+
+    #[tokio::test]
+    async fn stops_all_children_before_starting_them_again() {
+        // Arrange
+        let evts = SyncVec::default();
+        let mut node = Node::default();
+        let dad = node.spawn::<Dad>(evts.clone());
+
+        // Act
+        dad.send(());
+        time::sleep(Duration::from_millis(1)).await;
+
+        // Assert
+        let evts = evts.clone_vec().await;
+        println!("{:?}", evts);
+        assert_eq!(evts.len(), 10, "{:?}", evts);
+
+        let evts_clone = evts.clone();
+        let err_msg = move |idx: usize, actual: &str| {
+            evts_clone
+                .iter()
+                .enumerate()
+                .map(|(i, x)| {
+                    if i == idx {
+                        format!("{x} -- ACTUAL VALUE. EXPECTED: {actual}")
+                    } else {
+                        x.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",\n")
+        };
+
+        evts.iter()
+            .enumerate()
+            .take(4)
+            .for_each(|(i, x)| assert!(x.ends_with("init"), "{}", err_msg(i, x)));
+
+        evts.iter().enumerate().skip(4).take(3).for_each(|(i, x)| {
+            assert!(x.starts_with("Kid"), "{}", err_msg(i, "Kid{}::exit"));
+            assert!(x.ends_with("exit"), "{}", err_msg(i, "Kid{}::exit"));
+        });
+
+        evts.iter().enumerate().skip(7).for_each(|(i, x)| {
+            assert!(x.starts_with("Kid"), "{}", err_msg(i, "Kid{}::init"));
+            assert!(x.ends_with("init"), "{}", err_msg(i, "Kid{}::init"));
+        });
     }
 }

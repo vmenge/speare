@@ -199,7 +199,7 @@ where
         match self {
             Self::Handle => write!(f, "manual exit through Handle::stop"),
             Self::Parent => write!(f, "exit request from parent supervision strategy"),
-            Self::Err(e) => write!(f, "error: {e}"),
+            Self::Err(e) => write!(f, "{e}"),
         }
     }
 }
@@ -671,7 +671,12 @@ where
         handle
     }
 
-    async fn handle_err(&mut self, e: Box<dyn Any + Send>, proc_id: u64) -> Option<()> {
+    async fn handle_err(
+        &mut self,
+        e: Box<dyn Any + Send>,
+        proc_id: u64,
+        err_ack: Sender<()>,
+    ) -> Option<()> {
         let directive = self
             .supervision
             .deciders
@@ -688,7 +693,9 @@ where
                     .get_backoff_duration(self.supervision.max_restarts, self.supervision.backoff)
                 {
                     Some(delay) => {
-                        let _ = child.send(ProcMsg::FromParent(ProcAction::RestartIn(delay)));
+                        let _ = child.send(ProcMsg::FromParent(ProcAction::Restart(
+                            Restart::without_ack(delay),
+                        )));
                     }
 
                     None => {
@@ -697,6 +704,8 @@ where
                         self.children_proc_msg_tx.remove(&proc_id);
                     }
                 }
+
+                let _ = err_ack.send(());
             }
 
             (Strategy::OneForOne { counter }, Directive::Stop) => {
@@ -704,6 +713,8 @@ where
                 let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
                 counter.remove(&proc_id);
                 self.children_proc_msg_tx.remove(&proc_id);
+
+                let _ = err_ack.send(());
             }
 
             (Strategy::OneForAll { counter }, Directive::Restart) => {
@@ -711,8 +722,25 @@ where
                     .get_backoff_duration(self.supervision.max_restarts, self.supervision.backoff)
                 {
                     Some(delay) => {
+                        let _ = err_ack.send(());
+
+                        let mut exit_ack_rxs = vec![];
+                        let mut can_restart_txs = vec![];
+
                         for child in self.children_proc_msg_tx.values() {
-                            let _ = child.send(ProcMsg::FromParent(ProcAction::RestartIn(delay)));
+                            let (restart, exit_ack_rx, can_restart_tx) = Restart::with_ack(delay);
+                            exit_ack_rxs.push(exit_ack_rx);
+                            can_restart_txs.push(can_restart_tx);
+
+                            let _ = child.send(ProcMsg::FromParent(ProcAction::Restart(restart)));
+                        }
+
+                        for rx in exit_ack_rxs {
+                            let _ = rx.recv_async().await;
+                        }
+
+                        for tx in can_restart_txs {
+                            let _ = tx.send(());
                         }
                     }
 
@@ -727,6 +755,8 @@ where
             }
 
             (Strategy::OneForAll { .. }, Directive::Stop) => {
+                let _ = err_ack.send(());
+
                 for child in self.children_proc_msg_tx.values() {
                     let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
                 }
@@ -741,9 +771,13 @@ where
                     err: e,
                     ack: tx,
                 });
+
+                let _ = err_ack.send(());
             }
 
-            (_, Directive::Resume) => (),
+            (_, Directive::Resume) => {
+                let _ = err_ack.send(());
+            }
         };
 
         task::yield_now().await;
@@ -766,8 +800,47 @@ enum ProcMsg {
 }
 
 #[derive(Debug)]
+struct Restart {
+    delay: Duration,
+    exit_ack_tx: Option<Sender<()>>,
+    can_restart_rx: Option<Receiver<()>>,
+}
+
+impl Restart {
+    fn with_ack(delay: Duration) -> (Self, Receiver<()>, Sender<()>) {
+        let (exit_ack_tx, exit_ack_rx) = flume::unbounded();
+        let (can_restart_tx, can_restart_rx) = flume::unbounded();
+
+        let restart = Restart {
+            delay,
+            exit_ack_tx: Some(exit_ack_tx),
+            can_restart_rx: Some(can_restart_rx),
+        };
+
+        (restart, exit_ack_rx, can_restart_tx)
+    }
+
+    fn without_ack(delay: Duration) -> Restart {
+        Restart {
+            delay,
+            exit_ack_tx: None,
+            can_restart_rx: None,
+        }
+    }
+
+    /// Waits for signal from Parent to restart
+    async fn sync(&self) {
+        if let (Some(exit_ack_tx), Some(can_restart_rx)) = (&self.exit_ack_tx, &self.can_restart_rx)
+        {
+            let _ = exit_ack_tx.send(());
+            let _ = can_restart_rx.recv_async().await;
+        }
+    }
+}
+
+#[derive(Debug)]
 enum ProcAction {
-    RestartIn(Duration),
+    Restart(Restart),
     Stop,
 }
 
@@ -781,7 +854,7 @@ where
             time::sleep(d).await;
         }
 
-        let mut restart_in = None;
+        let mut restart = None;
 
         match Child::init(&mut ctx).await {
             Err(e) => {
@@ -796,8 +869,8 @@ where
                 loop {
                     if let Ok(ProcMsg::FromParent(proc_action)) = ctx.proc_msg_rx.recv_async().await
                     {
-                        if let ProcAction::RestartIn(dur) = proc_action {
-                            restart_in = Some(dur);
+                        if let ProcAction::Restart(r) = proc_action {
+                            restart = Some(r);
                         }
 
                         break;
@@ -810,8 +883,9 @@ where
 
                 task::yield_now().await;
 
-                if restart_in.is_some() {
-                    spawn::<Parent, Child>(ctx, restart_in)
+                if let Some(r) = restart {
+                    r.sync().await;
+                    spawn::<Parent, Child>(ctx, Some(r.delay))
                 }
             }
 
@@ -836,15 +910,14 @@ where
                                     break
                                 },
 
-                                Ok(ProcMsg::FromParent(ProcAction::RestartIn(dur))) => {
+                                Ok(ProcMsg::FromParent(ProcAction::Restart(r))) => {
                                     exit_reason = exit_reason.or(Some(ExitReason::Parent));
-                                    restart_in = Some(dur);
+                                    restart = Some(r);
                                     break;
                                 }
 
                                 Ok(ProcMsg::FromChild { child_id, err, ack }) => {
-                                    ctx.handle_err(err, child_id).await;
-                                    let _ = ack.send(());
+                                    ctx.handle_err(err, child_id, ack).await;
                                 }
 
                                 Ok(_) => ()
@@ -882,8 +955,9 @@ where
                 let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
                 process.exit(exit_reason, &mut ctx).await;
 
-                if restart_in.is_some() {
-                    spawn::<Parent, Child>(ctx, restart_in)
+                if let Some(r) = restart {
+                    r.sync().await;
+                    spawn::<Parent, Child>(ctx, Some(r.delay))
                 }
             }
         }
@@ -957,8 +1031,7 @@ impl Node {
                                     },
 
                                     Ok(ProcMsg::FromChild { child_id, err, ack }) => {
-                                        ctx.handle_err(err, child_id).await;
-                                        let _ = ack.send(());
+                                        ctx.handle_err(err, child_id, ack).await;
                                     }
 
                                     _ => {}
