@@ -1,23 +1,73 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{
-    any::{type_name, Any},
-    cmp,
-    collections::HashMap,
-    fmt,
-    ops::Deref,
-    sync::Arc,
-    time::Duration,
-};
+use std::{any::Any, collections::HashMap, time::Duration};
 use tokio::{
     task,
-    time::{self, Instant},
+    time::{self},
 };
 
+mod exit;
 mod req_res;
+mod supervision;
 
+pub use exit::*;
 pub use req_res::*;
+pub use supervision::*;
 
+/// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
+/// with a supervision tree to handle failures.
+///
+/// ## Example
+/// ```
+/// use speare::{Ctx, Process};
+/// use async_trait::async_trait;
+/// use derive_more::From;
+///
+/// struct Counter {
+///     count: u32,
+/// }
+///
+/// struct CounterProps {
+///     initial_count: u32,
+///     max_count: u32,
+/// }
+///
+/// #[derive(From)]
+/// enum CounterMsg {
+///     Inc(u32),
+/// }
+///
+/// enum CounterErr {
+///     MaxCountExceeded,
+/// }
+///
+/// #[async_trait]
+/// impl Process for Counter {
+///     type Props = CounterProps;
+///     type Msg = CounterMsg;
+///     type Err = CounterErr;
+///
+///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+///         Ok(Counter {
+///             count: ctx.props().initial_count,
+///         })
+///     }
+///
+///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+///         match msg {
+///             CounterMsg::Inc(x) => {
+///                 self.count += x;
+///
+///                 if self.count > ctx.props().max_count {
+///                     return Err(CounterErr::MaxCountExceeded);
+///                 }
+///             }
+///         }
+///
+///         Ok(())
+///     }
+/// }
+/// ```
 #[allow(unused_variables)]
 #[async_trait]
 pub trait Process: Sized + Send + 'static {
@@ -25,445 +75,25 @@ pub trait Process: Sized + Send + 'static {
     type Msg: Send + 'static;
     type Err: Send + Sync + 'static;
 
+    /// The constructor function that will be used to create an instance of your `Process`
+    /// when spawning or restarting it.
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err>;
 
+    /// A function that will be called if your `Process` is stopped or restarted.
     async fn exit(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {}
 
+    /// Called everytime your `Process` receives a message.
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         Ok(())
     }
 
+    /// Allows to determine custom strategies for handling errors from child processes.
     fn supervision(props: &Self::Props) -> Supervision {
         Supervision::one_for_one()
     }
 }
 
-pub struct SharedErr<E> {
-    err: Arc<E>,
-}
-
-impl<E> SharedErr<E> {
-    pub fn new(e: E) -> Self {
-        Self { err: Arc::new(e) }
-    }
-}
-
-impl<E> Clone for SharedErr<E> {
-    fn clone(&self) -> Self {
-        Self {
-            err: self.err.clone(),
-        }
-    }
-}
-
-impl<E> Deref for SharedErr<E> {
-    type Target = E;
-
-    fn deref(&self) -> &Self::Target {
-        let name = type_name::<E>();
-        println!("deref called on {name}!");
-        self.err.deref()
-    }
-}
-
-impl<E> AsRef<E> for SharedErr<E> {
-    fn as_ref(&self) -> &E {
-        let name = type_name::<E>();
-        println!("asref called on {name}!");
-        self.err.as_ref()
-    }
-}
-
-impl<E> fmt::Debug for SharedErr<E>
-where
-    E: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.err.as_ref())
-    }
-}
-
-impl<E> fmt::Display for SharedErr<E>
-where
-    E: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.err.as_ref())
-    }
-}
-
-pub enum ExitReason<P>
-where
-    P: Process,
-{
-    /// Process exited due to manual request through a `Handle<P>`
-    Handle,
-    /// Process exited due to a request from its Parent process as a part of its supervision strategy.
-    Parent,
-    /// Procss exited due to error.
-    Err(SharedErr<P::Err>),
-}
-
-impl<P> fmt::Debug for ExitReason<P>
-where
-    P: Process,
-    P::Err: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Handle => write!(f, "ExitReason::Handle"),
-            Self::Parent => write!(f, "ExitReason::Parent"),
-            Self::Err(arg0) => write!(f, "ExitReason::Err({:?})", arg0),
-        }
-    }
-}
-
-impl<P> fmt::Display for ExitReason<P>
-where
-    P: Process,
-    P::Err: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Handle => write!(f, "manual exit through Handle::stop"),
-            Self::Parent => write!(f, "exit request from parent supervision strategy"),
-            Self::Err(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Limit {
-    Amount(u32),
-    Within { amount: u32, timespan: Duration },
-}
-
-pub trait IntoLimit {
-    fn into_limit(self) -> Limit;
-}
-
-impl IntoLimit for Limit {
-    fn into_limit(self) -> Limit {
-        self
-    }
-}
-
-impl IntoLimit for u32 {
-    fn into_limit(self) -> Limit {
-        Limit::Amount(self)
-    }
-}
-
-impl IntoLimit for (u32, Duration) {
-    fn into_limit(self) -> Limit {
-        Limit::Within {
-            amount: self.0,
-            timespan: self.1,
-        }
-    }
-}
-
-impl IntoLimit for (Duration, u32) {
-    fn into_limit(self) -> Limit {
-        Limit::Within {
-            amount: self.1,
-            timespan: self.0,
-        }
-    }
-}
-
-pub struct Supervision {
-    strategy: Strategy,
-    directive: Directive,
-    max_restarts: Option<Limit>,
-    backoff: Option<Backoff>,
-    deciders: Vec<Box<dyn Send + Sync + Fn(&Box<dyn Any + Send>) -> Option<Directive>>>,
-}
-
-impl Supervision {
-    /// Initializes a one-for-one supervision strategy.
-    ///
-    /// Applies directives only to the failed process, maintaining
-    /// the state of others with the same parent. The default directive is
-    /// set to `Directive::Restart`, but can be overridden.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use speare::{Supervision, Directive};
-    ///
-    /// Supervision::one_for_one()
-    ///     .max_restarts(3)
-    ///     .directive(Directive::Resume);
-    /// ```
-    pub fn one_for_one() -> Self {
-        Self {
-            strategy: Strategy::OneForOne {
-                counter: Default::default(),
-            },
-            directive: Directive::Restart,
-            max_restarts: None,
-            backoff: None,
-            deciders: vec![],
-        }
-    }
-
-    /// Initializes a one-for-all supervision strategy.
-    ///
-    /// If any supervised process fails, all processes with the same parent
-    /// process will have the same directive applied to them.
-    /// The default directive is `Directive::Restart`, which can be overridden.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use speare::{Supervision, Directive};
-    ///
-    /// Supervision::one_for_all()
-    ///     .max_restarts(5)
-    ///     .directive(Directive::Stop);
-    /// ```
-    pub fn one_for_all() -> Self {
-        Self {
-            strategy: Strategy::OneForAll {
-                counter: Default::default(),
-            },
-            directive: Directive::Restart,
-            max_restarts: None,
-            backoff: None,
-            deciders: vec![],
-        }
-    }
-
-    /// Sets the directive to be applied when a child fails.
-    /// ## Examples
-    ///
-    /// ```
-    /// use speare::{Supervision, Directive};
-    ///
-    /// let ignore_all_errors = Supervision::one_for_all().directive(Directive::Resume);
-    /// let stop_all = Supervision::one_for_all().directive(Directive::Stop);
-    /// let restart_all = Supervision::one_for_all().directive(Directive::Restart);
-    /// ```
-    pub fn directive(mut self, directive: Directive) -> Self {
-        self.directive = directive;
-        self
-    }
-
-    /// Specifies how many times a failed process will be
-    /// restarted before giving up. By default there is no limit.
-    /// If limit is reached, process is stopped.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use std::time::Duration;
-    /// use speare::{Supervision, Directive, Limit};
-    ///
-    /// // Maximum of 3 restarts during the lifetime of this process.
-    /// Supervision::one_for_one().max_restarts(3);
-    ///
-    /// Supervision::one_for_one().max_restarts(Limit::Amount(3));
-    ///
-    /// // Maximum of 3 restarts in a 1 seconds timespan.
-    /// Supervision::one_for_one()
-    ///     .max_restarts(Limit::Within { amount: 3, timespan: Duration::from_secs(1) });
-    ///
-    /// Supervision::one_for_one()
-    ///     .max_restarts((3, Duration::from_secs(1)));
-    /// ```
-    pub fn max_restarts<T: IntoLimit>(mut self, max_restarts: T) -> Self {
-        self.max_restarts = Some(max_restarts.into_limit());
-        self
-    }
-
-    /// Configures the backoff strategy for restarts.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use speare::{Supervision, Backoff};
-    /// use std::time::Duration;
-    ///
-    /// // Using a static backoff duration
-    /// Supervision::one_for_one()
-    ///     .backoff(Backoff::Static(Duration::from_secs(5)));
-    ///
-    /// // Using an incremental backoff
-    /// Supervision::one_for_one()
-    ///     .backoff(Backoff::Incremental {
-    ///         steps: Duration::from_secs(1),
-    ///         max: Duration::from_secs(10),
-    ///     });
-    /// ```
-    pub fn backoff(mut self, backoff: Backoff) -> Self {
-        self.backoff = Some(backoff);
-        self
-    }
-
-    /// Allows specifying a closure that decides the directive for a failed process
-    /// based on its error type. The closure is applied only if the error type
-    /// successfully downcasts at runtime.
-    ///
-    /// ## Examples
-    ///
-    /// ```
-    /// use async_trait::async_trait;
-    /// use speare::{Ctx, Directive, Node, Process, Supervision};
-    ///
-    /// struct Parent;
-    ///
-    /// #[async_trait]
-    /// impl Process for Parent {
-    ///     type Props = ();
-    ///     type Msg = ();
-    ///     type Err = ();
-    ///
-    ///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-    ///         ctx.spawn::<Foo>(());
-    ///         ctx.spawn::<Bar>(());
-    ///         Ok(Parent)
-    ///     }
-    ///
-    ///     fn supervision(props: &Self::Props) -> Supervision {
-    ///         Supervision::one_for_all()
-    ///             .when(|e: &FooErr| Directive::Restart)
-    ///             .when(|e: &BarErr| Directive::Stop)
-    ///     }
-    /// }
-    ///
-    /// struct Foo;
-    ///
-    /// struct FooErr(String);
-    ///
-    /// #[async_trait]
-    /// impl Process for Foo {
-    ///     type Props = ();
-    ///     type Msg = ();
-    ///     type Err = FooErr;
-    ///
-    ///     async fn init(_: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-    ///         Err(FooErr("oh no".to_string()))
-    ///     }
-    /// }
-    ///
-    /// struct Bar;
-    ///
-    /// struct BarErr(String);
-    ///
-    /// #[async_trait]
-    /// impl Process for Bar {
-    ///     type Props = ();
-    ///     type Msg = ();
-    ///     type Err = BarErr;
-    ///
-    ///     async fn init(_: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-    ///         Err(BarErr("oopsie".to_string()))
-    ///     }
-    /// }
-    /// ```
-    pub fn when<F, E>(mut self, f: F) -> Self
-    where
-        E: 'static,
-        F: 'static + Send + Sync + Fn(&E) -> Directive,
-    {
-        let closure = move |any_e: &Box<dyn Any + Send>| {
-            let e: &SharedErr<E> = any_e.downcast_ref()?;
-            Some(f(e))
-        };
-
-        self.deciders.push(Box::new(closure));
-
-        self
-    }
-}
-
-type ProcessId = u64;
-
-#[derive(Clone, Debug)]
-struct RestartCount {
-    count: u32,
-    last_restart: Instant,
-}
-
-impl Default for RestartCount {
-    fn default() -> Self {
-        Self {
-            count: Default::default(),
-            last_restart: Instant::now(),
-        }
-    }
-}
-
-impl RestartCount {
-    /// None means that max numbers of reset have been reached and we should not reset anymore
-    fn get_backoff_duration(
-        &mut self,
-        max: Option<Limit>,
-        backoff: Option<Backoff>,
-    ) -> Option<Duration> {
-        let (should_restart, new_count) = match max {
-            None => (true, self.count + 1),
-
-            Some(Limit::Amount(m)) => (self.count < m, self.count + 1),
-
-            Some(Limit::Within { amount, timespan }) => {
-                if self.last_restart + timespan > Instant::now() {
-                    (self.count < amount, self.count + 1)
-                } else {
-                    (true, 1)
-                }
-            }
-        };
-
-        if should_restart {
-            let dur = match backoff {
-                None => Duration::ZERO,
-                Some(Backoff::Static(dur)) => dur,
-                Some(Backoff::Incremental { steps, max }) => cmp::min(steps * self.count, max),
-            };
-
-            self.count = new_count;
-            self.last_restart = Instant::now();
-
-            Some(dur)
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum Strategy {
-    OneForOne {
-        counter: HashMap<ProcessId, RestartCount>,
-    },
-
-    OneForAll {
-        counter: RestartCount,
-    },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Directive {
-    /// Resumes the process(es) as if nothing happened.
-    Resume,
-    /// Gracefully stops the process(es). If the process is currently handling a message, it will finish handling that and then immediately stop.
-    Stop,
-    /// Restarts the process(es), calling `Process::exit()` and subsequently `Process::init()`.
-    Restart,
-    /// Escalate the error to the parent `Process`.
-    Escalate,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Backoff {
-    /// Uses the same backoff duration for every restart.
-    Static(Duration),
-    /// Uses a backoff that increases with each subsequent restart up to a maximum value.
-    Incremental { steps: Duration, max: Duration },
-}
-
+/// A handle to send messages to or stop a `Proccess`.
 pub struct Handle<Msg> {
     msg_tx: Sender<Msg>,
     proc_msg_tx: Sender<ProcMsg>,
@@ -479,18 +109,69 @@ impl<Msg> Clone for Handle<Msg> {
 }
 
 impl<Msg> Handle<Msg> {
+    /// Stops the Process for which this `Handle<_>` is for.
     pub fn stop(&self) {
         let _ = self.proc_msg_tx.send(ProcMsg::FromHandle(ProcAction::Stop));
     }
 
+    /// Returns true if the Process is still running, false if it has been stopped.
     pub fn is_alive(&self) -> bool {
         !self.msg_tx.is_disconnected()
     }
 
+    /// Sends a message to the `Process` associated with this `Handle<_>`, failing silently if that process is no longer running.
+    ///
+    /// `send` can take advantage of `From<_>` implementations for the variants of the `Process::Msg` type.
+    ///
+    /// ## Example
+    /// ```
+    /// use speare::{Ctx, Node, Process};
+    /// use async_trait::async_trait;
+    /// use derive_more::From;
+    /// use tokio::runtime::Runtime;
+    ///
+    /// Runtime::new().unwrap().block_on(async {
+    ///     let mut node = Node::default();
+    ///     let counter = node.spawn::<Counter>(());
+    ///
+    ///     // we can send a u32 directly because
+    ///     // CounterMsg derives From
+    ///     counter.send(10);
+    /// });
+    ///
+    /// struct Counter(u32);
+    ///
+    /// #[derive(From)]
+    /// enum CounterMsg {
+    ///     Inc(u32),
+    ///     Print,
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl Process for Counter {
+    ///     type Props = ();
+    ///     type Msg = CounterMsg;
+    ///     type Err = ();
+    ///
+    ///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    ///         Ok(Counter(0))
+    ///     }
+    ///
+    ///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+    ///         match msg {
+    ///             CounterMsg::Inc(x) => self.0 += x,
+    ///             CounterMsg::Print => println!("Count is {}", self.0),
+    ///         }
+    ///
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
     pub fn send<M: Into<Msg>>(&self, msg: M) {
         let _ = self.msg_tx.send(msg.into());
     }
 
+    /// After the given duration, sends a message to the `Process` associated with this `Handle<_>`, failing silently if that process is no longer running.
     pub fn send_in<M>(&self, msg: M, duration: Duration)
     where
         Msg: 'static + Send,
@@ -504,6 +185,54 @@ impl<Msg> Handle<Msg> {
         });
     }
 
+    /// Sends a request to the `Process` as long as its messages implements `From<Request<Req,Res>>`.
+    ///
+    /// In `speare` a `Request<Req,Res>` allows a request-response transaction between processes.
+    ///
+    /// ## Example
+    /// ```
+    /// use speare::{req_res, Ctx, Node, Process, Request};
+    /// use async_trait::async_trait;
+    /// use derive_more::From;
+    /// use tokio::runtime::Runtime;
+    ///
+    /// Runtime::new().unwrap().block_on(async {
+    ///     let mut node = Node::default();
+    ///     let parser = node.spawn::<Parser>(());
+    ///
+    ///     let num = parser.req("5".to_string()).await.unwrap();
+    ///     assert_eq!(num, 5);
+    /// });
+    ///
+    /// struct Parser;
+    ///
+    /// #[derive(From)]
+    /// enum ParserMsg {
+    ///     Parse(Request<String, u32>),
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl Process for Parser {
+    ///     type Props = ();
+    ///     type Msg = ParserMsg;
+    ///     type Err = ();
+    ///
+    ///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    ///         Ok(Parser)
+    ///     }
+    ///
+    ///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+    ///         match msg {
+    ///             ParserMsg::Parse(req) => {
+    ///                 let num = req.data().parse().unwrap_or(0);
+    ///                 req.reply(num)
+    ///             }
+    ///         }
+    ///
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
     pub async fn req<Req, Res>(&self, req: Req) -> Result<Res, ReqErr>
     where
         Msg: From<Request<Req, Res>>,
@@ -513,6 +242,9 @@ impl<Msg> Handle<Msg> {
         res.recv().await
     }
 
+    /// Sends a request to the `Process` as long as its messages implements `From<Request<Req,Res>>`.
+    ///
+    /// Fails if response is not sent back within the given `Duration`.
     pub async fn req_timeout<Req, Res>(&self, req: Req, timeout: Duration) -> Result<Res, ReqErr>
     where
         Msg: From<Request<Req, Res>>,
@@ -523,6 +255,13 @@ impl<Msg> Handle<Msg> {
     }
 }
 
+/// The context surrounding the current `Process`.
+///
+/// Provides a collection of methods that allow you to:
+/// - spawn other processes as children of the current process
+/// - access the `Handle<_>` for the currrent process
+/// - access this process's props
+/// - clear this process's mailbox
 pub struct Ctx<P>
 where
     P: Process,
@@ -892,6 +631,12 @@ where
     });
 }
 
+/// A `Node` owns a collection of unsupervised top-level processes.
+/// If the `Node` is dropped, all of its processes are stopped.
+///
+/// ### Unsupervised Processes
+/// Unsupervised processes will be stopped when they error. Since they are unsupervised,
+/// the errors won't be handled and they will not be automatically restarted.
 #[derive(Default)]
 pub struct Node {
     children_directive_tx: Vec<Sender<ProcMsg>>,
@@ -906,6 +651,7 @@ impl Drop for Node {
 }
 
 impl Node {
+    /// Spawns an unsupervised process.
     pub fn spawn<P>(&mut self, props: P::Props) -> Handle<P::Msg>
     where
         P: Process,
