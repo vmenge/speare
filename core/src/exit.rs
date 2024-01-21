@@ -58,6 +58,7 @@ where
     }
 }
 
+/// Enumerates the reasons why a `Process` might exit.
 pub enum ExitReason<P>
 where
     P: Process,
