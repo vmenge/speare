@@ -1,9 +1,7 @@
 # Summary
 
 - [Introduction](intro.md)
-- [Spawning a Process](./spawning_a_process.md)
-- [Handlers](./handlers.md)
-- [The Reply<T,E> type](./reply.md)
-- [Lifecycle Management](./lifecycle_management.md)
-- [Pub / Sub](./pub_sub.md)
-- [Testing](./testing.md)
+- [What is a Process?](./what_is_a_process.md)
+- [Working with Processes](./wroking_with_processes.md)
+- [Process Lifecycle](./process_lifecycle.md)
+- [Supervision](./supervision.md)
