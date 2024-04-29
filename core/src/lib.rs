@@ -631,28 +631,63 @@ where
     });
 }
 
+enum NodeProcMsg {
+    SpawnedChild(Sender<ProcMsg>),
+    Stop,
+}
+
+fn node_proc() -> Sender<NodeProcMsg> {
+    let (tx, rx) = flume::unbounded();
+
+    task::spawn(async move {
+        let mut children = Vec::new();
+
+        while let Ok(msg) = rx.recv_async().await {
+            match msg {
+                NodeProcMsg::SpawnedChild(child) => {
+                    children.push(child);
+                }
+
+                NodeProcMsg::Stop => {
+                    for child in &children {
+                        let _ = child.send(ProcMsg::FromHandle(ProcAction::Stop));
+                    }
+
+                    break;
+                }
+            }
+        }
+    });
+
+    tx
+}
+
 /// A `Node` owns a collection of unsupervised top-level processes.
 /// If the `Node` is dropped, all of its processes are stopped.
 ///
 /// ### Unsupervised Processes
 /// Unsupervised processes will be stopped when they error. Since they are unsupervised,
 /// the errors won't be handled and they will not be automatically restarted.
-#[derive(Default)]
+#[derive(Clone)]
 pub struct Node {
-    children_directive_tx: Vec<Sender<ProcMsg>>,
+    proc: Sender<NodeProcMsg>,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self { proc: node_proc() }
+    }
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
-        for directive_tx in &self.children_directive_tx {
-            let _ = directive_tx.send(ProcMsg::FromHandle(ProcAction::Stop));
-        }
+        let _ = self.proc.send(NodeProcMsg::Stop);
     }
 }
 
 impl Node {
     /// Spawns an unsupervised process.
-    pub fn spawn<P>(&mut self, props: P::Props) -> Handle<P::Msg>
+    pub fn spawn<P>(&self, props: P::Props) -> Handle<P::Msg>
     where
         P: Process,
     {
@@ -739,7 +774,9 @@ impl Node {
             }
         });
 
-        self.children_directive_tx.push(handle.proc_msg_tx.clone());
+        let _ = self
+            .proc
+            .send(NodeProcMsg::SpawnedChild(handle.proc_msg_tx.clone()));
 
         handle
     }
