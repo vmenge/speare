@@ -668,7 +668,6 @@ fn node_proc() -> Sender<NodeProcMsg> {
 /// ### Unsupervised Processes
 /// Unsupervised processes will be stopped when they error. Since they are unsupervised,
 /// the errors won't be handled and they will not be automatically restarted.
-#[derive(Clone)]
 pub struct Node {
     proc: Sender<NodeProcMsg>,
 }
