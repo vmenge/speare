@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{any::Any, collections::HashMap, time::Duration};
+use std::{any::Any, collections::HashMap, future, time::Duration};
 use tokio::{
     task,
     time::{self},
@@ -72,7 +72,7 @@ pub use supervision::*;
 #[async_trait]
 pub trait Process: Sized + Send + 'static {
     type Props: Send + Sync + 'static;
-    type Msg: Send + 'static;
+    type Msg: Send + Sync + 'static;
     type Err: Send + Sync + 'static;
 
     /// The constructor function that will be used to create an instance of your `Process`
@@ -85,6 +85,14 @@ pub trait Process: Sized + Send + 'static {
     /// Called everytime your `Process` receives a message.
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         Ok(())
+    }
+
+    /// A function that can produce a message to be handled by the `Process`.
+    /// 
+    /// **Must be cancellation safe.**
+    async fn source(&mut self) -> Result<Self::Msg, Self::Err> {
+        future::pending::<()>().await;
+        unreachable!()
     }
 
     /// Allows to determine custom strategies for handling errors from child processes.
@@ -305,7 +313,7 @@ where
     /// ```
     pub fn spawn<Child>(&mut self, props: Child::Props) -> Handle<Child::Msg>
     where
-        Child: Process,
+        Child: Process + Sync,
     {
         self.total_children += 1;
         let (msg_tx, msg_rx) = flume::unbounded(); // child
@@ -514,7 +522,7 @@ enum ProcAction {
 fn spawn<Parent, Child>(mut ctx: Ctx<Child>, delay: Option<Duration>)
 where
     Parent: Process,
-    Child: Process,
+    Child: Process + Sync,
 {
     tokio::spawn(async move {
         if let Some(d) = delay.filter(|d| !d.is_zero()) {
@@ -558,7 +566,7 @@ where
 
             Ok(mut process) => {
                 let mut exit_reason = None;
-
+                
                 loop {
                     tokio::select! {
                         biased;
@@ -572,7 +580,7 @@ where
                                     break
                                 },
 
-                                Ok( ProcMsg::FromParent(ProcAction::Stop)) => {
+                                Ok(ProcMsg::FromParent(ProcAction::Stop)) => {
                                     exit_reason = exit_reason.or(Some(ExitReason::Parent));
                                     break
                                 },
@@ -608,6 +616,21 @@ where
                                         let _ = rx.recv_async().await;
                                     };
                                 }
+                            }
+                        }
+
+                        msg = process.source() => {
+                            let res = async { process.handle(msg?, &mut ctx).await }.await;
+                            if let Err(e) = res {
+                                let e = SharedErr::new(e);
+                                exit_reason = Some(ExitReason::Err(e.clone()));
+                                let (tx, rx) = flume::unbounded();
+                                let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
+                                    child_id: ctx.id,
+                                    err: Box::new(e.clone()),
+                                    ack: tx,
+                                });
+                                let _ = rx.recv_async().await;
                             }
                         }
                     }
@@ -756,6 +779,14 @@ impl Node {
                                             break;
                                         };
                                     }
+                                }
+                            }
+
+                            msg = process.source() => {
+                                let res = async { process.handle(msg?, &mut ctx).await }.await;
+                                if let Err(e) = res {
+                                    exit_reason = Some(ExitReason::Err(SharedErr::new(e)));
+                                    break;
                                 }
                             }
                         }
