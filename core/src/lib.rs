@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use std::{any::Any, collections::HashMap, time::Duration};
+use futures::Stream;
+use std::{any::Any, collections::HashMap, future::Future, time::Duration};
 use tokio::{
     task,
     time::{self},
@@ -8,13 +9,13 @@ use tokio::{
 
 mod exit;
 mod req_res;
-mod supervision;
 mod stream;
+mod supervision;
 
 pub use exit::*;
 pub use req_res::*;
-pub use supervision::*;
 pub use stream::*;
+pub use supervision::*;
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
 /// with a supervision tree to handle failures.
@@ -244,6 +245,16 @@ impl<Msg> Handle<Msg> {
         res.recv().await
     }
 
+    pub async fn reqw<F, Req, Res>(&self, to_req: F, req: Req) -> Result<Res, ReqErr>
+    where
+        F: Fn(Request<Req, Res>) -> Msg
+    {
+        let (req, res) = req_res(req);
+        let msg = to_req(req);
+        self.send(msg);
+        res.recv().await
+    }
+
     /// Sends a request to the `Process` as long as its messages implements `From<Request<Req,Res>>`.
     ///
     /// Fails if response is not sent back within the given `Duration`.
@@ -253,6 +264,16 @@ impl<Msg> Handle<Msg> {
     {
         let (req, res) = req_res(req);
         self.send(req);
+        res.recv_timeout(timeout).await
+    }
+
+    pub async fn reqw_timeout<F, Req, Res>(&self, to_req: F, req: Req, timeout: Duration) -> Result<Res, ReqErr>
+    where
+        F: Fn(Request<Req, Res>) -> Msg
+    {
+        let (req, res) = req_res(req);
+        let msg = to_req(req);
+        self.send(msg);
         res.recv_timeout(timeout).await
     }
 }
@@ -338,6 +359,18 @@ where
             .insert(self.total_children, handle.proc_msg_tx.clone());
 
         handle
+    }
+
+    pub fn stream<F, Fut, S, T, E>(&mut self, f: F) -> StreamBuilder<'_, P, F, Fut, S, T, E, NoSink>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = S> + Send + Sync + 'static,
+        S: Stream<Item = Result<T, E>> + Send + Sync + 'static + Unpin,
+        T: Send + Sync + 'static,
+        E: Send + Sync + 'static,
+        P::Msg: Sync,
+    {
+        StreamBuilder::new(f, self)
     }
 
     async fn handle_err(
