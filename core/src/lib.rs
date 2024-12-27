@@ -9,10 +9,12 @@ use tokio::{
 mod exit;
 mod req_res;
 mod supervision;
+mod stream;
 
 pub use exit::*;
 pub use req_res::*;
 pub use supervision::*;
+pub use stream::*;
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
 /// with a supervision tree to handle failures.
