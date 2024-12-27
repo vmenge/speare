@@ -26,16 +26,12 @@ impl<E> Deref for SharedErr<E> {
     type Target = E;
 
     fn deref(&self) -> &Self::Target {
-        let name = type_name::<E>();
-        println!("deref called on {name}!");
         self.err.deref()
     }
 }
 
 impl<E> AsRef<E> for SharedErr<E> {
     fn as_ref(&self) -> &E {
-        let name = type_name::<E>();
-        println!("asref called on {name}!");
         self.err.as_ref()
     }
 }
