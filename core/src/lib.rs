@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
-use futures::Stream;
 use std::{any::Any, collections::HashMap, future::Future, time::Duration};
 use tokio::{
     task,
@@ -9,12 +8,10 @@ use tokio::{
 
 mod exit;
 mod req_res;
-mod stream;
 mod supervision;
 
 pub use exit::*;
 pub use req_res::*;
-pub use stream::*;
 pub use supervision::*;
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
@@ -303,6 +300,7 @@ where
     children_proc_msg_tx: HashMap<u64, Sender<ProcMsg>>,
     supervision: Supervision,
     total_children: u64,
+    tasks: Vec<task::JoinHandle<()>>,
 }
 
 impl<P> Ctx<P>
@@ -356,6 +354,7 @@ where
             children_proc_msg_tx: Default::default(),
             total_children: 0,
             supervision,
+            tasks: vec![],
         };
 
         spawn::<P, Child>(ctx, None);
@@ -366,15 +365,43 @@ where
         handle
     }
 
-    pub fn stream<F, Fut, S, T, E>(&mut self, f: F) -> StreamBuilder<'_, P, F, Fut, S, T, E, NoSink>
+    /// Spawns a task owned by this [`Process`].
+    /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
+    /// When the [`Actor`] owning the task terminates, all tasks are forcefully aborted.
+    pub fn subtask<F>(&mut self, future: F)
     where
-        F: Fn() -> Fut + Send + 'static,
-        Fut: Future<Output = S> + Send + 'static,
-        S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
-        T: Send + 'static,
-        E: Send + Sync + 'static,
+        F: Future<Output = Result<(), P::Err>> + Send + 'static,
     {
-        StreamBuilder::new(f, self)
+        let proc_msg_tx = self.handle.proc_msg_tx.clone();
+
+        let task = task::spawn(async move {
+            if let Err(e) = future.await {
+                let _ = proc_msg_tx.send(ProcMsg::TaskErr(Box::new(e)));
+            }
+        });
+
+        self.tasks.push(task);
+    }
+
+    /// Runs the provided closure on a thread where blocking is acceptable.
+    /// Spawned thread is owned by this [`Actor`] and managed by the tokio threadpool
+    /// 
+    /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
+    /// When the [`Actor`] owning the task terminates, all tasks are forcefully aborted.
+    /// See [`tokio::task::spawn_blocking`] for more on blocking tasks
+    pub fn subtask_blocking<F>(&mut self, f: F)
+    where
+        F: FnOnce() -> Result<(), P::Err> + Send + 'static,
+    {
+        let proc_msg_tx = self.handle.proc_msg_tx.clone();
+
+        let task = task::spawn_blocking(move || {
+            if let Err(e) = f() {
+                let _ = proc_msg_tx.send(ProcMsg::TaskErr(Box::new(e)));
+            }
+        });
+
+        self.tasks.push(task);
     }
 
     async fn handle_err(
@@ -500,7 +527,7 @@ enum ProcMsg {
         err: Box<dyn Any + Send>,
         ack: Sender<()>,
     },
-
+    TaskErr(Box<dyn Any + Send>),
     FromParent(ProcAction),
     FromHandle(ProcAction),
 }
@@ -587,6 +614,10 @@ where
                     let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
                 }
 
+                for task in &ctx.tasks {
+                    task.abort();
+                }
+
                 task::yield_now().await;
 
                 if let Some(r) = restart {
@@ -605,6 +636,13 @@ where
                         proc_msg = ctx.proc_msg_rx.recv_async() => {
                             match proc_msg {
                                 Err(_) => break,
+
+                                Ok(ProcMsg::TaskErr(e)) => {
+                                    let e: Box<Child::Err> = e.downcast().unwrap();
+                                    let e = SharedErr::new(*e);
+                                    exit_reason = Some(ExitReason::Err(e));
+                                    break;
+                                }
 
                                 Ok(ProcMsg::FromHandle(ProcAction::Stop) ) => {
                                     exit_reason = Some(ExitReason::Handle);
@@ -654,6 +692,10 @@ where
 
                 for child in ctx.children_proc_msg_tx.values() {
                     let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
+                }
+
+                for task in &ctx.tasks {
+                    task.abort();
                 }
 
                 task::yield_now().await;
@@ -750,6 +792,7 @@ impl Node {
             proc_msg_rx: directive_rx,
             children_proc_msg_tx: Default::default(),
             supervision,
+            tasks: vec![],
         };
 
         tokio::spawn(async move {
@@ -771,6 +814,13 @@ impl Node {
                             proc_msg = ctx.proc_msg_rx.recv_async() => {
                                 match proc_msg {
                                     Err(_) => break,
+
+                                    Ok(ProcMsg::TaskErr(e)) => {
+                                        let e: Box<P::Err> = e.downcast().unwrap();
+                                        let e = SharedErr::new(*e);
+                                        exit_reason = Some(ExitReason::Err(e));
+                                        break;
+                                    }
 
                                     Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
                                         exit_reason = Some(ExitReason::Handle);
@@ -802,6 +852,10 @@ impl Node {
 
                     for child in ctx.children_proc_msg_tx.values() {
                         let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
+                    }
+
+                    for task in &ctx.tasks {
+                        task.abort();
                     }
 
                     task::yield_now().await;
