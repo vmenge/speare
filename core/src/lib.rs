@@ -74,7 +74,7 @@ pub use supervision::*;
 #[allow(unused_variables)]
 #[async_trait]
 pub trait Process: Sized + Send + 'static {
-    type Props: Send + Sync + 'static;
+    type Props: Send + 'static;
     type Msg: Send + 'static;
     type Err: Send + Sync + 'static;
 

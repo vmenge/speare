@@ -24,12 +24,12 @@ struct Props<F, Snk> {
 #[async_trait]
 impl<F, Fut, S, T, E, Snk> Process for Source<F, Fut, S, T, E, Snk>
 where
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn() -> Fut + Send + 'static,
     Fut: Future<Output = S> + Send + 'static,
     S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
-    T: Send + Sync + 'static,
+    T: Send + 'static,
     E: Send + Sync + 'static,
-    Snk: Sink<T> + Send + Sync + 'static,
+    Snk: Sink<T> + Send + 'static,
 {
     type Props = Props<F, Snk>;
     type Msg = ();
@@ -149,12 +149,12 @@ where
 impl<P, F, Fut, S, T, E, Snk> StreamBuilder<'_, P, F, Fut, S, T, E, Snk>
 where
     P: Process,
-    F: Fn() -> Fut + Send + Sync + 'static,
+    F: Fn() -> Fut + Send + 'static,
     Fut: Future<Output = S> + Send + 'static,
     S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
-    T: Send + Sync + 'static,
+    T: Send + 'static,
     E: Send + Sync + 'static,
-    Snk: Sink<T> + Send + Sync + 'static,
+    Snk: Sink<T> + Send + 'static,
 {
     pub fn spawn(self) -> StreamHandle {
         let handle = self.ctx.spawn::<Source<F, Fut, S, T, E, Snk>>(Props {
