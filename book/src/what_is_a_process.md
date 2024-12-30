@@ -1,39 +1,39 @@
-# What is a Process?
-A Process is really just a loop that lives in a `tokio::task` together with some state, yielding to the tokio runtime while it waits for a message received via a flume channel which it then uses to modify its state. All `speare` does is provide mechanisms to manage lifecycle, communication and supervision of processes.
+# What is a Actor?
+A Actor is really just a loop that lives in a `tokio::task` together with some state, yielding to the tokio runtime while it waits for a message received via a flume channel which it then uses to modify its state. All `speare` does is provide mechanisms to manage lifecycle, communication and supervision of actors..
 
-A `Process` is comprised of a few parts:
+A `Actor` is comprised of a few parts:
 ### Trait Implementor
-- **State**: the main struct which implements the `Process` trait. The state is mutable and can be modified every time a messaged is received by the `Process`.
+- **State**: the main struct which implements the `Actor` trait. The state is mutable and can be modified every time a messaged is received by the `Actor`.
 
 ### Associated types
-- **Props**: dependencies needed by the struct that implements `Process` for instantiation, configuration or anything in between.
-- **Msg**: data received and processed by the `Process`.
-- **Err**: the error that can be returned by the process when it fails.
+- **Props**: dependencies needed by the struct that implements `Actor` for instantiation, configuration or anything in between.
+- **Msg**: data received and processed by the `Actor`.
+- **Err**: the error that can be returned by the `Actor` when it fails.
 
 ### Trait Functions
 - **async fn init**: `(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err>`
 
-    *Required*. Used by `speare` to create new instances of your `Process` whenever it is spawned or restarted.
+    *Required*. Used by `speare` to create new instances of your `Actor` whenever it is spawned or restarted.
 
 - **async fn exit**: `(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>)`
 
-    *Optional*. Called every time your `Process` is stopped, be it manually through its `Handle<_>` or
+    *Optional*. Called every time your `Actor` is stopped, be it manually through its `Handle<_>` or
     by the parent through its [supervision strategy](./supervision.md).
 
 - **handle**: `(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err>`
 
-    *Optional*. Called when the `Process` receives a message through its channel. 
+    *Optional*. Called when the `Actor` receives a message through its channel. 
     Messages are **always** processed sequentially.
 
 - **supervision**: `(props: &Self::Props) -> Supervision`
 
-    *Optional*. Called before your `Process` is spawned. Used to customize the [supervision strategy](./supervision.md)
+    *Optional*. Called before your `Actor` is spawned. Used to customize the [supervision strategy](./supervision.md)
     for its **children**. If not implemented, the default supervision strategy will
     be used: one-for-one infinite restarts without backoff.
 
 
 ## Example
-Below is an example of a process making use of all its associated types and trait functions.
+Below is an example of a `Actor` making use of all its associated types and trait functions.
 
 ```rs
 use speare::*;
@@ -61,7 +61,7 @@ enum CounterErr {
 }
 
 #[async_trait]
-impl Process for Counter {
+impl Actor for Counter {
     type Props = CounterProps;
     type Msg = CounterMsg;
     type Err = CounterErr;

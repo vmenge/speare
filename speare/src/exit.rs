@@ -1,6 +1,6 @@
 use std::{fmt, ops::Deref, sync::Arc};
 
-use crate::Process;
+use crate::Actor;
 
 /// A thin wrapper around `Arc<E>` with custom `fmt::Debug` and `fmt::Display`
 /// implementations for better error logging.
@@ -54,22 +54,22 @@ where
     }
 }
 
-/// Enumerates the reasons why a `Process` might exit.
+/// Enumerates the reasons why a [`Actor`] might exit.
 pub enum ExitReason<P>
 where
-    P: Process,
+    P: Actor,
 {
-    /// Process exited due to manual request through a `Handle<P>`
+    /// [`Actor`] exited due to manual request through a `Handle<_>`
     Handle,
-    /// Process exited due to a request from its Parent process as a part of its supervision strategy.
+    /// [`Actor`] exited due to a request from its Parent [`Actor`] as a part of its supervision strategy.
     Parent,
-    /// Procss exited due to error.
+    /// [`Actor`] exited due to error.
     Err(SharedErr<P::Err>),
 }
 
 impl<P> fmt::Debug for ExitReason<P>
 where
-    P: Process,
+    P: Actor,
     P::Err: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -83,7 +83,7 @@ where
 
 impl<P> fmt::Display for ExitReason<P>
 where
-    P: Process,
+    P: Actor,
     P::Err: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

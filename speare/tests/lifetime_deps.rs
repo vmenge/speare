@@ -1,6 +1,6 @@
 mod sync_vec;
 use async_trait::async_trait;
-use speare::{Ctx, ExitReason, Node, Process};
+use speare::{Actor, Ctx, ExitReason, Node};
 use sync_vec::SyncVec;
 use tokio::task;
 
@@ -19,7 +19,7 @@ enum TestMsg {
 struct Foo;
 
 #[async_trait]
-impl Process for Foo {
+impl Actor for Foo {
     type Props = SyncVec<TestMsg>;
     type Msg = ();
     type Err = ();
@@ -40,7 +40,7 @@ type FailOnStart = bool;
 struct Bar;
 
 #[async_trait]
-impl Process for Bar {
+impl Actor for Bar {
     type Props = (SyncVec<TestMsg>, FailOnStart);
     type Msg = ();
     type Err = ();
@@ -64,7 +64,7 @@ impl Process for Bar {
 struct Child1;
 
 #[async_trait]
-impl Process for Child1 {
+impl Actor for Child1 {
     type Props = SyncVec<TestMsg>;
     type Msg = ();
     type Err = ();
@@ -83,7 +83,7 @@ impl Process for Child1 {
 struct Child2;
 
 #[async_trait]
-impl Process for Child2 {
+impl Actor for Child2 {
     type Props = SyncVec<TestMsg>;
     type Msg = ();
     type Err = ();
@@ -102,7 +102,7 @@ impl Process for Child2 {
 #[tokio::test]
 async fn on_init_and_on_exit_are_called_in_order() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let recvd: SyncVec<_> = Default::default();
     node.spawn::<Foo>(recvd.clone());
     let fail_to_start = false;

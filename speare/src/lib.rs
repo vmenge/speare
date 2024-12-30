@@ -19,7 +19,7 @@ pub use supervision::*;
 ///
 /// ## Example
 /// ```
-/// use speare::{Ctx, Process};
+/// use speare::{Ctx, Actor};
 /// use async_trait::async_trait;
 /// use derive_more::From;
 ///
@@ -42,7 +42,7 @@ pub use supervision::*;
 /// }
 ///
 /// #[async_trait]
-/// impl Process for Counter {
+/// impl Actor for Counter {
 ///     type Props = CounterProps;
 ///     type Msg = CounterMsg;
 ///     type Err = CounterErr;
@@ -70,24 +70,24 @@ pub use supervision::*;
 /// ```
 #[allow(unused_variables)]
 #[async_trait]
-pub trait Process: Sized + Send + 'static {
+pub trait Actor: Sized + Send + 'static {
     type Props: Send + 'static;
     type Msg: Send + 'static;
     type Err: Send + Sync + 'static;
 
-    /// The constructor function that will be used to create an instance of your `Process`
+    /// The constructor function that will be used to create an instance of your [`Actor`]
     /// when spawning or restarting it.
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err>;
 
-    /// A function that will be called if your `Process` is stopped or restarted.
+    /// A function that will be called if your [`Actor`] is stopped or restarted.
     async fn exit(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {}
 
-    /// Called everytime your `Process` receives a message.
+    /// Called everytime your [`Actor`] receives a message.
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         Ok(())
     }
 
-    /// Allows to determine custom strategies for handling errors from child processes.
+    /// Allows to determine custom strategies for handling errors from child actors.
     fn supervision(props: &Self::Props) -> Supervision {
         Supervision::one_for_one()
     }
@@ -109,23 +109,23 @@ impl<Msg> Clone for Handle<Msg> {
 }
 
 impl<Msg> Handle<Msg> {
-    /// Stops the Process for which this `Handle<_>` is for.
+    /// Stops the [`Actor`] for which this `Handle<_>` is for.
     pub fn stop(&self) {
         let _ = self.proc_msg_tx.send(ProcMsg::FromHandle(ProcAction::Stop));
     }
 
-    /// Returns true if the Process is still running, false if it has been stopped.
+    /// Returns true if the [`Actor`] is still running, false if it has been stopped.
     pub fn is_alive(&self) -> bool {
         !self.msg_tx.is_disconnected()
     }
 
-    /// Sends a message to the `Process` associated with this `Handle<_>`, failing silently if that process is no longer running.
+    /// Sends a message to the [`Actor`] associated with this `Handle<_>`, failing silently if that [`Actor`] is no longer running.
     ///
-    /// `send` can take advantage of `From<_>` implementations for the variants of the `Process::Msg` type.
+    /// `send` can take advantage of `From<_>` implementations for the variants of the `Actor::Msg` type.
     ///
     /// ## Example
     /// ```
-    /// use speare::{Ctx, Node, Process};
+    /// use speare::{Ctx, Node, Actor};
     /// use async_trait::async_trait;
     /// use derive_more::From;
     /// use tokio::runtime::Runtime;
@@ -148,7 +148,7 @@ impl<Msg> Handle<Msg> {
     /// }
     ///
     /// #[async_trait]
-    /// impl Process for Counter {
+    /// impl Actor for Counter {
     ///     type Props = ();
     ///     type Msg = CounterMsg;
     ///     type Err = ();
@@ -171,7 +171,7 @@ impl<Msg> Handle<Msg> {
         let _ = self.msg_tx.send(msg.into());
     }
 
-    /// After the given duration, sends a message to the `Process` associated with this `Handle<_>`, failing silently if that process is no longer running.
+    /// After the given duration, sends a message to the `Actor ` associated with this `Handle<_>`, failing silently if that [`Actor`] is no longer running.
     pub fn send_in<M>(&self, msg: M, duration: Duration)
     where
         Msg: 'static + Send,
@@ -185,19 +185,19 @@ impl<Msg> Handle<Msg> {
         });
     }
 
-    /// Sends a request to the `Process` as long as its messages implements `From<Request<Req,Res>>`.
+    /// Sends a request to the `Actor ` as long as its messages implements `From<Request<Req,Res>>`.
     ///
-    /// In `speare` a `Request<Req,Res>` allows a request-response transaction between processes.
+    /// In `speare` a `Request<Req,Res>` allows a request-response transaction between actors.
     ///
     /// ## Example
     /// ```
-    /// use speare::{req_res, Ctx, Node, Process, Request};
+    /// use speare::{req_res, Ctx, Node, Actor, Request};
     /// use async_trait::async_trait;
     /// use derive_more::From;
     /// use tokio::runtime::Runtime;
     ///
     /// Runtime::new().unwrap().block_on(async {
-    ///     let mut node = Node::default();
+    ///     let node = Node::default();
     ///     let parser = node.spawn::<Parser>(());
     ///
     ///     let num = parser.req("5".to_string()).await.unwrap();
@@ -212,7 +212,7 @@ impl<Msg> Handle<Msg> {
     /// }
     ///
     /// #[async_trait]
-    /// impl Process for Parser {
+    /// impl Actor for Parser {
     ///     type Props = ();
     ///     type Msg = ParserMsg;
     ///     type Err = ();
@@ -252,7 +252,7 @@ impl<Msg> Handle<Msg> {
         res.recv().await
     }
 
-    /// Sends a request to the `Process` as long as its messages implements `From<Request<Req,Res>>`.
+    /// Sends a request to the `Actor ` as long as its messages implements `From<Request<Req,Res>>`.
     ///
     /// Fails if response is not sent back within the given `Duration`.
     pub async fn req_timeout<Req, Res>(&self, req: Req, timeout: Duration) -> Result<Res, ReqErr>
@@ -280,16 +280,16 @@ impl<Msg> Handle<Msg> {
     }
 }
 
-/// The context surrounding the current `Process`.
+/// The context surrounding the current `Actor`.
 ///
 /// Provides a collection of methods that allow you to:
-/// - spawn other processes as children of the current process
-/// - access the `Handle<_>` for the currrent process
-/// - access this process's props
-/// - clear this process's mailbox
+/// - spawn other actors as children of the current actor
+/// - access the `Handle<_>` for the currrent actor
+/// - access this actor's props
+/// - clear this actor's mailbox
 pub struct Ctx<P>
 where
-    P: Process,
+    P: Actor,
 {
     id: u64,
     props: P::Props,
@@ -305,14 +305,14 @@ where
 
 impl<P> Ctx<P>
 where
-    P: Process,
+    P: Actor,
 {
-    /// Returns a reference to the `Process::Props` of the current `Process`.
+    /// Returns a reference to the `Actor::Props` of the current `Actor `.
     pub fn props(&self) -> &P::Props {
         &self.props
     }
 
-    /// Returns a reference to a `Handle` of the current `Process`.
+    /// Returns a reference to a `Handle` of the current `Actor `.
     pub fn this(&self) -> &Handle<P::Msg> {
         &self.handle
     }
@@ -322,7 +322,7 @@ where
         self.msg_rx.drain();
     }
 
-    /// Spawns and supervises a child `Process`.
+    /// Spawns and supervises a child `Actor `.
     /// ## Examples
     ///
     /// ```
@@ -331,7 +331,7 @@ where
     /// ```
     pub fn spawn<Child>(&mut self, props: Child::Props) -> Handle<Child::Msg>
     where
-        Child: Process,
+        Child: Actor,
     {
         self.total_children += 1;
         let (msg_tx, msg_rx) = flume::unbounded(); // child
@@ -365,7 +365,7 @@ where
         handle
     }
 
-    /// Spawns a task owned by this [`Process`].
+    /// Spawns a task owned by this [`Actor `].
     /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
     /// When the [`Actor`] owning the task terminates, all tasks are forcefully aborted.
     pub fn subtask<F>(&mut self, future: F)
@@ -385,7 +385,7 @@ where
 
     /// Runs the provided closure on a thread where blocking is acceptable.
     /// Spawned thread is owned by this [`Actor`] and managed by the tokio threadpool
-    /// 
+    ///
     /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
     /// When the [`Actor`] owning the task terminates, all tasks are forcefully aborted.
     /// See [`tokio::task::spawn_blocking`] for more on blocking tasks
@@ -579,8 +579,8 @@ enum ProcAction {
 
 fn spawn<Parent, Child>(mut ctx: Ctx<Child>, delay: Option<Duration>)
 where
-    Parent: Process,
-    Child: Process,
+    Parent: Actor,
+    Child: Actor,
 {
     tokio::spawn(async move {
         if let Some(d) = delay.filter(|d| !d.is_zero()) {
@@ -626,7 +626,7 @@ where
                 }
             }
 
-            Ok(mut process) => {
+            Ok(mut actor) => {
                 let mut exit_reason = None;
 
                 loop {
@@ -673,7 +673,7 @@ where
                                 Err(_) => break,
 
                                 Ok(msg) => {
-                                    if let Err(e) = process.handle(msg, &mut ctx).await {
+                                    if let Err(e) = actor.handle(msg, &mut ctx).await {
                                         let e = SharedErr::new(e);
                                         exit_reason = Some(ExitReason::Err(e.clone()));
                                         let (tx, rx) = flume::unbounded();
@@ -701,7 +701,7 @@ where
                 task::yield_now().await;
 
                 let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
-                process.exit(exit_reason, &mut ctx).await;
+                actor.exit(exit_reason, &mut ctx).await;
 
                 if let Some(r) = restart {
                     r.sync().await;
@@ -743,11 +743,11 @@ fn node_proc() -> Sender<NodeProcMsg> {
     tx
 }
 
-/// A `Node` owns a collection of unsupervised top-level processes.
-/// If the `Node` is dropped, all of its processes are stopped.
+/// A `Node` owns a collection of unsupervised top-level actors.
+/// If the `Node` is dropped, all of its actors are stopped.
 ///
-/// ### Unsupervised Processes
-/// Unsupervised processes will be stopped when they error. Since they are unsupervised,
+/// ### Unsupervised Actors
+/// Unsupervised actors will be stopped when they error. Since they are unsupervised,
 /// the errors won't be handled and they will not be automatically restarted.
 pub struct Node {
     proc: Sender<NodeProcMsg>,
@@ -766,10 +766,10 @@ impl Drop for Node {
 }
 
 impl Node {
-    /// Spawns an unsupervised process.
+    /// Spawns an unsupervised [`Actor`].
     pub fn spawn<P>(&self, props: P::Props) -> Handle<P::Msg>
     where
-        P: Process,
+        P: Actor,
     {
         let (msg_tx, msg_rx) = flume::unbounded();
         let (directive_tx, directive_rx) = flume::unbounded();
@@ -805,7 +805,7 @@ impl Node {
                     task::yield_now().await;
                 }
 
-                Ok(mut process) => {
+                Ok(mut actor) => {
                     let mut exit_reason = None;
                     loop {
                         tokio::select! {
@@ -840,7 +840,7 @@ impl Node {
                                     Err(_) => break,
 
                                     Ok(msg) => {
-                                        if let Err(e) = process.handle(msg, &mut ctx).await {
+                                        if let Err(e) = actor.handle(msg, &mut ctx).await {
                                             exit_reason = Some(ExitReason::Err(SharedErr::new(e)));
                                             break;
                                         };
@@ -861,7 +861,7 @@ impl Node {
                     task::yield_now().await;
 
                     let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
-                    process.exit(exit_reason, &mut ctx).await;
+                    actor.exit(exit_reason, &mut ctx).await;
                 }
             }
         });

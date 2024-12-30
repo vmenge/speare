@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use speare::{req_res, Ctx, Handle, Node, Process, Request};
+use speare::{req_res, Actor, Ctx, Handle, Node, Request};
 use tokio::task;
 
 struct Foo;
 
 #[async_trait]
-impl Process for Foo {
+impl Actor for Foo {
     type Props = ();
     type Msg = ();
     type Err = ();
@@ -18,7 +18,7 @@ impl Process for Foo {
 struct Bar;
 
 #[async_trait]
-impl Process for Bar {
+impl Actor for Bar {
     type Props = ();
     type Msg = ();
     type Err = ();
@@ -30,9 +30,9 @@ impl Process for Bar {
 
 #[allow(clippy::disallowed_names)]
 #[tokio::test]
-async fn node_stops_all_processes_when_dropped() {
+async fn node_stops_all_actors_when_dropped() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let foo = node.spawn::<Foo>(());
     let bar = node.spawn::<Bar>(());
 
@@ -49,7 +49,7 @@ async fn node_stops_all_processes_when_dropped() {
 struct Quitter;
 
 #[async_trait]
-impl Process for Quitter {
+impl Actor for Quitter {
     type Props = bool;
     type Msg = ();
     type Err = ();
@@ -68,9 +68,9 @@ impl Process for Quitter {
 }
 
 #[tokio::test]
-async fn root_process_quits_without_supervision_on_error() {
+async fn root_actor_quits_without_supervision_on_error() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let quit_on_start = false;
     let quitter = node.spawn::<Quitter>(quit_on_start);
     assert!(quitter.is_alive());
@@ -101,7 +101,7 @@ struct Parent {
 }
 
 #[async_trait]
-impl Process for Parent {
+impl Actor for Parent {
     type Props = ();
     type Msg = Request<(), (Handle<()>, Handle<()>)>;
     type Err = ();
@@ -122,9 +122,9 @@ impl Process for Parent {
 
 #[allow(clippy::disallowed_names)]
 #[tokio::test]
-async fn stopping_a_root_process_stops_all_its_children() {
+async fn stopping_a_root_actor_stops_all_its_children() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let parent = node.spawn::<Parent>(());
 
     let (req, res) = req_res(());

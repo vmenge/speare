@@ -1,6 +1,6 @@
 mod sync_vec;
 use async_trait::async_trait;
-use speare::{Ctx, Node, Process};
+use speare::{Actor, Ctx, Node};
 use sync_vec::SyncVec;
 use tokio::task;
 
@@ -13,7 +13,7 @@ enum TestMsg {
 struct Foo;
 
 #[async_trait]
-impl Process for Foo {
+impl Actor for Foo {
     type Props = SyncVec<TestMsg>;
     type Msg = TestMsg;
     type Err = ();
@@ -31,7 +31,7 @@ impl Process for Foo {
 struct Bar;
 
 #[async_trait]
-impl Process for Bar {
+impl Actor for Bar {
     type Props = SyncVec<TestMsg>;
     type Msg = TestMsg;
     type Err = ();
@@ -50,7 +50,7 @@ impl Process for Bar {
 #[tokio::test]
 async fn sends_msgs_in_correct_order() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let recvd: SyncVec<_> = Default::default();
     let foo = node.spawn::<Foo>(recvd.clone());
     let bar = node.spawn::<Bar>(recvd.clone());

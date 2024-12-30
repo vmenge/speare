@@ -3,7 +3,7 @@ use std::{any::Any, cmp, collections::HashMap, time::Duration};
 use tokio::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
-/// Specifies limits for process restarts in supervision strategies.
+/// Specifies limits for [`Actor`] restarts in [`Supervision`] strategies.
 /// ## Examples
 ///
 /// ```
@@ -57,18 +57,18 @@ impl IntoLimit for (Duration, u32) {
     }
 }
 
-/// Supervision strategies determine how parent processes respond to child-processes failures,
+/// Supervision strategies determine how parent actors respond to child-actor failures,
 /// allowing for automated recovery and error handling. Strategies can be customized with
 /// max restarts, incremental backoff and conditional directives based on error type.
 ///
-/// **The default strategy is to restart processes on error in a *one-for-one* manner without any limits or backoff.**
+/// **The default strategy is to restart actors on error in a *one-for-one* manner without any limits or backoff.**
 ///
 /// ### One-for-One
-/// Applies directives only to the failed process, maintaining
+/// Applies directives only to the failed actor, maintaining
 /// the state of others with the same parent.
 ///
 /// ### One-for-All
-/// If any child process fails, all processes with the same parent
+/// If any child actor fails, all actors with the same parent
 /// will have the same directive applied to them.
 ///
 /// ## Examples
@@ -102,7 +102,7 @@ pub struct Supervision {
 impl Supervision {
     /// Initializes a one-for-one supervision strategy.
     ///
-    /// Applies directives only to the failed process, maintaining
+    /// Applies directives only to the failed actor, maintaining
     /// the state of others with the same parent. The default directive is
     /// set to `Directive::Restart`, but can be overridden.
     ///
@@ -129,8 +129,8 @@ impl Supervision {
 
     /// Initializes a one-for-all supervision strategy.
     ///
-    /// If any supervised process fails, all processes with the same parent
-    /// process will have the same directive applied to them.
+    /// If any supervised actor fails, all actors with the same parent
+    /// actor will have the same directive applied to them.
     /// The default directive is `Directive::Restart`, but can be overridden.
     ///
     /// ## Examples
@@ -169,9 +169,9 @@ impl Supervision {
         self
     }
 
-    /// Specifies how many times a failed process will be
+    /// Specifies how many times a failed actor will be
     /// restarted before giving up. By default there is no limit.
-    /// If limit is reached, process is stopped.
+    /// If limit is reached, actor is stopped.
     ///
     /// ## Examples
     ///
@@ -179,7 +179,7 @@ impl Supervision {
     /// use std::time::Duration;
     /// use speare::{Supervision, Directive, Limit};
     ///
-    /// // Maximum of 3 restarts during the lifetime of this process.
+    /// // Maximum of 3 restarts during the lifetime of this actor.
     /// Supervision::one_for_one().max_restarts(3);
     ///
     /// Supervision::one_for_one().max_restarts(Limit::Amount(3));
@@ -220,7 +220,7 @@ impl Supervision {
         self
     }
 
-    /// Allows specifying a closure that decides the directive for a failed process
+    /// Allows specifying a closure that decides the directive for a failed actor
     /// based on its error type. The closure is applied only if the error type
     /// successfully downcasts at runtime.
     ///
@@ -228,12 +228,12 @@ impl Supervision {
     ///
     /// ```
     /// use async_trait::async_trait;
-    /// use speare::{Ctx, Directive, Node, Process, Supervision};
+    /// use speare::{Ctx, Directive, Node, Actor, Supervision};
     ///
     /// struct Parent;
     ///
     /// #[async_trait]
-    /// impl Process for Parent {
+    /// impl Actor for Parent {
     ///     type Props = ();
     ///     type Msg = ();
     ///     type Err = ();
@@ -256,7 +256,7 @@ impl Supervision {
     /// struct FooErr(String);
     ///
     /// #[async_trait]
-    /// impl Process for Foo {
+    /// impl Actor for Foo {
     ///     type Props = ();
     ///     type Msg = ();
     ///     type Err = FooErr;
@@ -271,7 +271,7 @@ impl Supervision {
     /// struct BarErr(String);
     ///
     /// #[async_trait]
-    /// impl Process for Bar {
+    /// impl Actor for Bar {
     ///     type Props = ();
     ///     type Msg = ();
     ///     type Err = BarErr;
@@ -297,7 +297,7 @@ impl Supervision {
     }
 }
 
-type ProcessId = u64;
+type ActorId = u64;
 
 #[derive(Clone, Debug)]
 pub(crate) struct RestartCount {
@@ -355,7 +355,7 @@ impl RestartCount {
 #[derive(Clone, Debug)]
 pub(crate) enum Strategy {
     OneForOne {
-        counter: HashMap<ProcessId, RestartCount>,
+        counter: HashMap<ActorId, RestartCount>,
     },
 
     OneForAll {
@@ -364,20 +364,20 @@ pub(crate) enum Strategy {
 }
 
 #[derive(Clone, Copy, Debug)]
-/// Action to take after a `Process` errors.
+/// Action to take after a `Actor ` errors.
 pub enum Directive {
-    /// Resumes the process(es) as if nothing happened.
+    /// Resumes the actor(s) as if nothing happened.
     Resume,
-    /// Gracefully stops the process(es). If the process is currently handling a message, it will finish handling that and then immediately stop.
+    /// Gracefully stops the actor(s). If the actor is currently handling a message, it will finish handling that and then immediately stop.
     Stop,
-    /// Restarts the process(es), calling `Process::exit()` and subsequently `Process::init()`.
+    /// Restarts the actor(s), calling `Actor::exit()` and subsequently `Actor::init()`.
     Restart,
-    /// Escalate the error to the parent `Process`.
+    /// Escalate the error to the parent `Actor`.
     Escalate,
 }
 
 #[derive(Clone, Copy, Debug)]
-/// How long to wait before restarting a `Process` that errored.
+/// How long to wait before restarting a `Actor ` that errored.
 pub enum Backoff {
     /// Uses the same backoff duration for every restart.
     Static(Duration),

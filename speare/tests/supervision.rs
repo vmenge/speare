@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use derive_more::From;
-use speare::{req_res, Ctx, Directive, ExitReason, Handle, Node, Process, Request, Supervision};
+use speare::{req_res, Actor, Ctx, Directive, ExitReason, Handle, Node, Request, Supervision};
 use std::time::Duration;
 use tokio::{task, time};
 mod sync_vec;
@@ -19,7 +19,7 @@ enum ChildMsg {
 type Id = u32;
 
 #[async_trait]
-impl Process for Child {
+impl Actor for Child {
     type Props = Id;
     type Msg = ChildMsg;
     type Err = Id;
@@ -51,7 +51,7 @@ mod one_for_one {
     }
 
     #[async_trait]
-    impl Process for MaxResetAmount {
+    impl Actor for MaxResetAmount {
         type Props = ();
         type Msg = Request<(), Handle<ChildMsg>>;
         type Err = ();
@@ -73,9 +73,9 @@ mod one_for_one {
     }
 
     #[tokio::test]
-    async fn reaches_max_reset_limit_and_shuts_down_process() {
+    async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
         let max_reset = node.spawn::<MaxResetAmount>(());
 
         let (req, res) = req_res(());
@@ -83,7 +83,7 @@ mod one_for_one {
         let child = res.recv().await.unwrap();
         let kill = || async {
             child.send(ChildMsg::Fail);
-            time::sleep(Duration::from_nanos(1)).await; // wait for process to be killed
+            time::sleep(Duration::from_nanos(1)).await; // wait for actor to be killed
         };
 
         // Act & Assert
@@ -109,7 +109,7 @@ mod one_for_one {
     }
 
     #[async_trait]
-    impl Process for MaxResetWithin {
+    impl Actor for MaxResetWithin {
         type Props = ();
         type Msg = Request<(), Handle<ChildMsg>>;
         type Err = ();
@@ -131,9 +131,9 @@ mod one_for_one {
     }
 
     #[tokio::test]
-    async fn shuts_down_process_only_if_reset_limit_is_reached_within_duration() {
+    async fn shuts_down_actor_only_if_reset_limit_is_reached_within_duration() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
         let max_reset = node.spawn::<MaxResetWithin>(());
 
         let (req, res) = req_res(());
@@ -141,7 +141,7 @@ mod one_for_one {
         let child = res.recv().await.unwrap();
         let kill = || async {
             child.send(ChildMsg::Fail);
-            time::sleep(Duration::from_nanos(1)).await; // wait for process to be killed
+            time::sleep(Duration::from_nanos(1)).await; // wait for actor to be killed
         };
 
         // Act & Assert
@@ -174,7 +174,7 @@ mod one_for_one {
     }
 
     #[async_trait]
-    impl Process for Parent {
+    impl Actor for Parent {
         type Props = ();
         type Msg = Request<(), Parent>;
         type Err = ();
@@ -202,9 +202,9 @@ mod one_for_one {
     }
 
     #[tokio::test]
-    async fn one_for_one_only_affects_failing_process() {
+    async fn one_for_one_only_affects_failing_actor() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
         let root = node.spawn::<Parent>(());
 
         let (req, res) = req_res(());
@@ -241,7 +241,7 @@ mod one_for_one {
 
         assert_eq!(counts().await, (1, 0, 3));
 
-        // Fail child2, Process should stop. Other counts should remain unaffected.
+        // Fail child2, Actor should stop. Other counts should remain unaffected.
         child2.send(ChildMsg::Fail);
         time::sleep(Duration::from_nanos(1)).await;
 
@@ -263,7 +263,7 @@ mod one_for_one {
     }
 
     #[async_trait]
-    impl Process for EscalateRoot {
+    impl Actor for EscalateRoot {
         type Props = ();
         type Msg = EscalateRootMsg;
         type Err = ();
@@ -301,7 +301,7 @@ mod one_for_one {
     struct EscalateParentErr(Handle<EscalateRootMsg>);
 
     #[async_trait]
-    impl Process for EscalateParent {
+    impl Actor for EscalateParent {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
         type Err = EscalateParentErr;
@@ -322,7 +322,7 @@ mod one_for_one {
     struct EscalateChildErr(Handle<EscalateRootMsg>);
 
     #[async_trait]
-    impl Process for EscalateChild {
+    impl Actor for EscalateChild {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
         type Err = EscalateChildErr;
@@ -335,7 +335,7 @@ mod one_for_one {
     #[tokio::test]
     async fn escalates_error() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
 
         // Act
         let root = node.spawn::<EscalateRoot>(());
@@ -359,7 +359,7 @@ mod one_for_all {
     }
 
     #[async_trait]
-    impl Process for MaxResetAmount {
+    impl Actor for MaxResetAmount {
         type Props = ();
         type Msg = Request<(), Self>;
         type Err = ();
@@ -382,9 +382,9 @@ mod one_for_all {
     }
 
     #[tokio::test]
-    async fn reaches_max_reset_limit_and_shuts_down_process() {
+    async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
         let max_reset = node.spawn::<MaxResetAmount>(());
 
         let (req, res) = req_res(());
@@ -423,7 +423,7 @@ mod one_for_all {
     }
 
     #[async_trait]
-    impl Process for MaxResetWithin {
+    impl Actor for MaxResetWithin {
         type Props = ();
         type Msg = Request<(), Self>;
         type Err = ();
@@ -446,9 +446,9 @@ mod one_for_all {
     }
 
     #[tokio::test]
-    async fn shuts_down_process_only_if_reset_limit_is_reached_within_duration() {
+    async fn shuts_down_actor_only_if_reset_limit_is_reached_within_duration() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
         let max_reset = node.spawn::<MaxResetWithin>(());
 
         let (req, res) = req_res(());
@@ -491,7 +491,7 @@ mod one_for_all {
     }
 
     #[async_trait]
-    impl Process for Parent {
+    impl Actor for Parent {
         type Props = ();
         type Msg = Request<(), Parent>;
         type Err = ();
@@ -519,9 +519,9 @@ mod one_for_all {
     }
 
     #[tokio::test]
-    async fn one_for_all_affects_all_process() {
+    async fn one_for_all_affects_all_actors() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
         let root = node.spawn::<Parent>(());
 
         let (req, res) = req_res(());
@@ -558,7 +558,7 @@ mod one_for_all {
 
         assert_eq!(counts().await, (0, 0, 0));
 
-        // Fail child2, all Processes should stop
+        // Fail child2, all Actors should stop
         child2.send(ChildMsg::Fail);
         time::sleep(Duration::from_nanos(1)).await;
 
@@ -578,7 +578,7 @@ mod one_for_all {
     }
 
     #[async_trait]
-    impl Process for EscalateRoot {
+    impl Actor for EscalateRoot {
         type Props = ();
         type Msg = EscalateRootMsg;
         type Err = ();
@@ -616,7 +616,7 @@ mod one_for_all {
     struct EscalateParentErr(Handle<EscalateRootMsg>);
 
     #[async_trait]
-    impl Process for EscalateParent {
+    impl Actor for EscalateParent {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
         type Err = EscalateParentErr;
@@ -637,7 +637,7 @@ mod one_for_all {
     struct EscalateChildErr(Handle<EscalateRootMsg>);
 
     #[async_trait]
-    impl Process for EscalateChild {
+    impl Actor for EscalateChild {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
         type Err = EscalateChildErr;
@@ -650,7 +650,7 @@ mod one_for_all {
     #[tokio::test]
     async fn escalates_error() {
         // Arrange
-        let mut node = Node::default();
+        let node = Node::default();
 
         // Act
         let root = node.spawn::<EscalateRoot>(());
@@ -666,7 +666,7 @@ mod one_for_all {
     }
 
     #[async_trait]
-    impl Process for Dad {
+    impl Actor for Dad {
         type Props = SyncVec<String>;
         type Msg = ();
         type Err = ();
@@ -697,7 +697,7 @@ mod one_for_all {
     struct Kid;
 
     #[async_trait]
-    impl Process for Kid {
+    impl Actor for Kid {
         type Props = (Id, SyncVec<String>);
         type Msg = ();
         type Err = ();
@@ -722,7 +722,7 @@ mod one_for_all {
     async fn stops_all_children_before_starting_them_again() {
         // Arrange
         let evts = SyncVec::default();
-        let mut node = Node::default();
+        let node = Node::default();
         let dad = node.spawn::<Dad>(evts.clone());
 
         // Act

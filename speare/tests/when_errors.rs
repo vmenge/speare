@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use async_trait::async_trait;
-use speare::{req_res, Ctx, Directive, Handle, Node, Process, Request, Supervision};
+use speare::{req_res, Actor, Ctx, Directive, Handle, Node, Request, Supervision};
+use std::time::Duration;
 use tokio::time;
 
 struct Foo;
@@ -9,7 +8,7 @@ struct Foo;
 struct FooErr(Handle<ParentMsg>);
 
 #[async_trait]
-impl Process for Foo {
+impl Actor for Foo {
     type Props = Handle<ParentMsg>;
     type Msg = ();
     type Err = FooErr;
@@ -24,7 +23,7 @@ struct Bar;
 struct BarErr(Handle<ParentMsg>);
 
 #[async_trait]
-impl Process for Bar {
+impl Actor for Bar {
     type Props = Handle<ParentMsg>;
     type Msg = ();
     type Err = BarErr;
@@ -44,7 +43,7 @@ enum ParentMsg {
 }
 
 #[async_trait]
-impl Process for Parent {
+impl Actor for Parent {
     type Props = ();
     type Msg = ParentMsg;
     type Err = ();
@@ -80,9 +79,9 @@ impl Process for Parent {
 }
 
 #[tokio::test]
-async fn it_processes_different_errors_differently() {
+async fn it_actor_different_errors_differently() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let parent = node.spawn::<Parent>(());
     time::sleep(Duration::from_nanos(1)).await;
 

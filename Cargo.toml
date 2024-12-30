@@ -1,2 +1,3 @@
 [workspace]
-members = ["core"]
+members = ["speare"]
+resolver = "2"

@@ -1,7 +1,6 @@
-use std::time::Duration;
-
 use async_trait::async_trait;
-use speare::{Ctx, ExitReason, Node, Process, Request};
+use speare::{Actor, Ctx, ExitReason, Node};
+use std::time::Duration;
 use sync_vec::SyncVec;
 use tokio::time;
 
@@ -15,7 +14,7 @@ enum Msg {
 }
 
 #[async_trait]
-impl Process for Root {
+impl Actor for Root {
     type Props = (SyncVec<String>, SyncVec<String>);
     type Msg = Msg;
     type Err = String;

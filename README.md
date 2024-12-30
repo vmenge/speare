@@ -7,7 +7,7 @@
 `speare` is a minimalistic actor framework. A thin abstraction over tokio tasks and flume channels with supervision inspired by Akka.NET. Read [The Speare Book](https://vmenge.github.io/speare/) for more details on how to use the library.
 
 ## Quick Look
-Below is an example of a very minimal `Counter` `Process`.
+Below is an example of a very minimal `Counter` `Actor`.
 
 ```rust
 use speare::*;
@@ -25,7 +25,7 @@ enum CounterMsg {
 }
 
 #[async_trait]
-impl Process for Counter {
+impl Actor for Counter {
     type Props = ();
     type Msg = CounterMsg;
     type Err = ();

@@ -2,21 +2,21 @@ use flume::{Receiver, Sender};
 use std::{fmt, time::Duration};
 use tokio::time;
 
-/// Represents a request sent to a `Process`.
-/// `Request` holds the data sent to a `Process` and provides a channel to reply back to the sender.
+/// Represents a request sent to a `Actor `.
+/// `Request` holds the data sent to a `Actor ` and provides a channel to reply back to the sender.
 ///
 /// ## Example
 /// ```
-/// use speare::{req_res, Ctx, Node, Process, Request};
+/// use speare::{req_res, Ctx, Node, Actor, Request};
 /// use async_trait::async_trait;
 /// use derive_more::From;
 /// use tokio::runtime::Runtime;
 ///
 /// Runtime::new().unwrap().block_on(async {
-///     let mut node = Node::default();
+///     let node = Node::default();
 ///     let parser = node.spawn::<Parser>(());
 ///
-///     // use Handle<_>::req if the Process::Msg
+///     // use Handle<_>::req if the Actor::Msg
 ///     // implements From<Request<_,_>>
 ///     let num = parser.req("5".to_string()).await.unwrap();
 ///     assert_eq!(num, 5);
@@ -36,7 +36,7 @@ use tokio::time;
 /// }
 ///
 /// #[async_trait]
-/// impl Process for Parser {
+/// impl Actor for Parser {
 ///     type Props = ();
 ///     type Msg = ParserMsg;
 ///     type Err = ();
@@ -57,7 +57,6 @@ use tokio::time;
 ///     }
 /// }
 /// ```
-
 pub struct Request<Req, Res> {
     data: Req,
     tx: Sender<Res>,
@@ -88,17 +87,17 @@ impl<Req, Res> Request<Req, Res> {
     }
 }
 
-///`Response<Res>` is used to asynchronously wait for and retrieve the result of a `Request<Req, Res>` sent to a `Process`.
+///`Response<Res>` is used to asynchronously wait for and retrieve the result of a `Request<Req, Res>` sent to a `Actor `.
 ///
 /// ## Example
 /// ```
-/// use speare::{req_res, Ctx, Node, Process, Request};
+/// use speare::{req_res, Ctx, Node, Actor, Request};
 /// use async_trait::async_trait;
 /// use derive_more::From;
 /// use tokio::runtime::Runtime;
 ///
 /// Runtime::new().unwrap().block_on(async {
-///     let mut node = Node::default();
+///     let node = Node::default();
 ///     let parser = node.spawn::<Parser>(());
 ///
 ///     let (req, res) = req_res("10".to_string());
@@ -115,7 +114,7 @@ impl<Req, Res> Request<Req, Res> {
 /// }
 ///
 /// #[async_trait]
-/// impl Process for Parser {
+/// impl Actor for Parser {
 ///     type Props = ();
 ///     type Msg = ParserMsg;
 ///     type Err = ();
@@ -187,10 +186,10 @@ impl<Res> Response<Res> {
     }
 }
 
-/// Creates a paired `Request<Req, Res>` and `Response<Res>` for communication between `speare` processes.
+/// Creates a paired `Request<Req, Res>` and `Response<Res>` for communication between `speare` actors.
 /// ## Example
 /// ```
-/// use speare::{req_res, Ctx, Node, Process, Request};
+/// use speare::{req_res, Ctx, Node, Actor, Request};
 /// use async_trait::async_trait;
 /// use derive_more::From;
 /// use tokio::runtime::Runtime;
@@ -213,7 +212,7 @@ impl<Res> Response<Res> {
 /// }
 ///
 /// #[async_trait]
-/// impl Process for Parser {
+/// impl Actor for Parser {
 ///     type Props = ();
 ///     type Msg = ParserMsg;
 ///     type Err = ();

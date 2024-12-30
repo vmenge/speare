@@ -1,11 +1,11 @@
 # Introduction
-This guide introduces `speare`, covering `Process` creation, message handling, and essential library features. The objective is to provide clear, concise instructions for effectively utilizing `speare` in your Rust projects.
+This guide introduces `speare`, covering `Actor` creation, message handling, and essential library features. The objective is to provide clear, concise instructions for effectively utilizing `speare` in your Rust projects.
 
 ## What is `speare`?
-`speare` is a Rust library designed to simplify the process of actor-based concurrency. It provides an abstraction over [tokio green threads](https://tokio.rs/tokio/tutorial/spawning#tasks) and [flume channels](https://github.com/zesterer/flume), allowing for easier management of tokio threads and efficient message passing between them. `speare` revolves around a main abstraction: `Process` -- which lives on its own green thread owning its data, reducing the risks of deadlocks and encouraging a modular design. No more `Arc<Mutex<T>>` everywhere :)
+`speare` is a Rust library designed to simplify the process of actor-based concurrency. It provides an abstraction over [tokio green threads](https://tokio.rs/tokio/tutorial/spawning#tasks) and [flume channels](https://github.com/zesterer/flume), allowing for easier management of tokio threads and efficient message passing between them. `speare` revolves around a main abstraction: `Actor` -- which lives on its own green thread owning its data, reducing the risks of deadlocks and encouraging a modular design. No more `Arc<Mutex<T>>` everywhere :)
 
 ## Quick Look
-Below is an example of a very minimal `Counter` `Process`.
+Below is an example of a very minimal `Counter` `Actor`.
 
 ```rust
 use speare::*;
@@ -23,7 +23,7 @@ enum CounterMsg {
 }
 
 #[async_trait]
-impl Process for Counter {
+impl Actor for Counter {
     type Props = ();
     type Msg = CounterMsg;
     type Err = ();
