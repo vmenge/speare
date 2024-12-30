@@ -247,7 +247,7 @@ impl<Msg> Handle<Msg> {
 
     pub async fn reqw<F, Req, Res>(&self, to_req: F, req: Req) -> Result<Res, ReqErr>
     where
-        F: Fn(Request<Req, Res>) -> Msg
+        F: Fn(Request<Req, Res>) -> Msg,
     {
         let (req, res) = req_res(req);
         let msg = to_req(req);
@@ -267,9 +267,14 @@ impl<Msg> Handle<Msg> {
         res.recv_timeout(timeout).await
     }
 
-    pub async fn reqw_timeout<F, Req, Res>(&self, to_req: F, req: Req, timeout: Duration) -> Result<Res, ReqErr>
+    pub async fn reqw_timeout<F, Req, Res>(
+        &self,
+        to_req: F,
+        req: Req,
+        timeout: Duration,
+    ) -> Result<Res, ReqErr>
     where
-        F: Fn(Request<Req, Res>) -> Msg
+        F: Fn(Request<Req, Res>) -> Msg,
     {
         let (req, res) = req_res(req);
         let msg = to_req(req);
@@ -364,8 +369,8 @@ where
     pub fn stream<F, Fut, S, T, E>(&mut self, f: F) -> StreamBuilder<'_, P, F, Fut, S, T, E, NoSink>
     where
         F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = S> + Send + Sync + 'static,
-        S: Stream<Item = Result<T, E>> + Send + Sync + 'static + Unpin,
+        Fut: Future<Output = S> + Send + 'static,
+        S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
         T: Send + Sync + 'static,
         E: Send + Sync + 'static,
         P::Msg: Sync,

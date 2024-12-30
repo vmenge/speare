@@ -25,7 +25,7 @@ struct Props<F, Snk> {
 impl<F, Fut, S, T, E, Snk> Process for Source<F, Fut, S, T, E, Snk>
 where
     F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = S> + Send +  'static,
+    Fut: Future<Output = S> + Send + 'static,
     S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
     T: Send + Sync + 'static,
     E: Send + Sync + 'static,
@@ -118,11 +118,11 @@ where
 impl<'a, P, F, Fut, S, T, E> StreamBuilder<'a, P, F, Fut, S, T, E, NoSink>
 where
     P: Process,
-    F: Fn() -> Fut + 'static,
-    Fut: Future<Output = S> + 'static,
-    S: Stream<Item = Result<T, E>> + 'static + Unpin,
-    T: 'static,
-    E: 'static,
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = S> + Send + 'static,
+    S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
+    T: Send + Sync + 'static,
+    E: Send + Sync + 'static,
 {
     pub fn new(init: F, ctx: &'a mut Ctx<P>) -> Self {
         Self {
@@ -150,8 +150,8 @@ impl<P, F, Fut, S, T, E, Snk> StreamBuilder<'_, P, F, Fut, S, T, E, Snk>
 where
     P: Process,
     F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = S> + Send + Sync + 'static,
-    S: Stream<Item = Result<T, E>> + Send + Sync + 'static + Unpin,
+    Fut: Future<Output = S> + Send + 'static,
+    S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
     T: Send + Sync + 'static,
     E: Send + Sync + 'static,
     Snk: Sink<T> + Send + Sync + 'static,
@@ -171,7 +171,7 @@ where
 impl<T, K> Sink<K> for Handle<T>
 where
     T: Send,
-    K: Sync + Send + Into<T>,
+    K: Send + Into<T>,
 {
     async fn consume(&self, item: K) {
         let k: T = item.into();
@@ -181,8 +181,8 @@ where
 
 impl<T, K> Sink<K> for flume::Sender<T>
 where
-    T: Sync + Send,
-    K: Sync + Send + Into<T>,
+    T: Send,
+    K: Send + Into<T>,
 {
     async fn consume(&self, item: K) {
         let k: T = item.into();
@@ -192,8 +192,8 @@ where
 
 impl<T, K> Sink<K> for tokio::sync::mpsc::Sender<T>
 where
-    T: Sync + Send,
-    K: Sync + Send + Into<T>,
+    T: Send,
+    K: Send + Into<T>,
 {
     async fn consume(&self, item: K) {
         let k: T = item.into();
@@ -203,8 +203,8 @@ where
 
 impl<T, K> Sink<K> for tokio::sync::broadcast::Sender<T>
 where
-    T: Sync + Send,
-    K: Sync + Send + Into<T>,
+    T: Send,
+    K: Send + Into<T>,
 {
     async fn consume(&self, item: K) {
         let k: T = item.into();
