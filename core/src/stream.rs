@@ -118,11 +118,11 @@ where
 impl<'a, P, F, Fut, S, T, E> StreamBuilder<'a, P, F, Fut, S, T, E, NoSink>
 where
     P: Process,
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = S> + Send + Sync + 'static,
-    S: Stream<Item = Result<T, E>> + Send + Sync + 'static + Unpin,
-    T: Send + Sync + 'static,
-    E: Send + Sync + 'static,
+    F: Fn() -> Fut +   'static,
+    Fut: Future<Output = S> +   'static,
+    S: Stream<Item = Result<T, E>> + 'static + Unpin,
+    T:   'static,
+    E:   'static,
 {
     pub fn new(init: F, ctx: &'a mut Ctx<P>) -> Self {
         Self {
@@ -170,7 +170,7 @@ where
 
 impl<T, K> Sink<K> for Handle<T>
 where
-    T: Sync + Send,
+    T:  Send,
     K: Sync + Send + Into<T>,
 {
     async fn consume(&self, item: K) {
