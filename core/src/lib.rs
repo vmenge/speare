@@ -368,12 +368,11 @@ where
 
     pub fn stream<F, Fut, S, T, E>(&mut self, f: F) -> StreamBuilder<'_, P, F, Fut, S, T, E, NoSink>
     where
-        F: Fn() -> Fut + Send + Sync + 'static,
+        F: Fn() -> Fut + Send + 'static,
         Fut: Future<Output = S> + Send + 'static,
         S: Stream<Item = Result<T, E>> + Send + 'static + Unpin,
-        T: Send + Sync + 'static,
+        T: Send + 'static,
         E: Send + Sync + 'static,
-        P::Msg: Sync,
     {
         StreamBuilder::new(f, self)
     }
