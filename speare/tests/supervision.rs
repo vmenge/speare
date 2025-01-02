@@ -75,12 +75,41 @@ mod one_for_one {
     #[tokio::test]
     async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
         let max_reset = node.spawn::<MaxResetAmount>(());
 
         let (req, res) = req_res(());
         max_reset.send(req);
         let child = res.recv().await.unwrap();
+        let kill = || async {
+            child.send(ChildMsg::Fail);
+            time::sleep(Duration::from_nanos(1)).await; // wait for actor to be killed
+        };
+
+        // Act & Assert
+
+        // No restarts, should be alive
+        assert!(child.is_alive());
+
+        kill().await;
+        // 1 restart, should be alive
+        assert!(child.is_alive());
+
+        kill().await;
+        // 2 restarts, should be alive
+        assert!(child.is_alive());
+
+        kill().await;
+        // 3 restarts, should be dead
+        assert!(!child.is_alive());
+    }
+
+    #[tokio::test]
+    async fn using_node_as_parent_reaches_max_reset_limit_and_shuts_down_actor() {
+        // Arrange
+        let mut node = Node::with_supervision(Supervision::one_for_one().max_restarts(2));
+        let child = node.spawn::<Child>(0);
+
         let kill = || async {
             child.send(ChildMsg::Fail);
             time::sleep(Duration::from_nanos(1)).await; // wait for actor to be killed
@@ -133,7 +162,7 @@ mod one_for_one {
     #[tokio::test]
     async fn shuts_down_actor_only_if_reset_limit_is_reached_within_duration() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
         let max_reset = node.spawn::<MaxResetWithin>(());
 
         let (req, res) = req_res(());
@@ -204,7 +233,7 @@ mod one_for_one {
     #[tokio::test]
     async fn one_for_one_only_affects_failing_actor() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
         let root = node.spawn::<Parent>(());
 
         let (req, res) = req_res(());
@@ -335,7 +364,7 @@ mod one_for_one {
     #[tokio::test]
     async fn escalates_error() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
 
         // Act
         let root = node.spawn::<EscalateRoot>(());
@@ -384,7 +413,7 @@ mod one_for_all {
     #[tokio::test]
     async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
         let max_reset = node.spawn::<MaxResetAmount>(());
 
         let (req, res) = req_res(());
@@ -448,7 +477,7 @@ mod one_for_all {
     #[tokio::test]
     async fn shuts_down_actor_only_if_reset_limit_is_reached_within_duration() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
         let max_reset = node.spawn::<MaxResetWithin>(());
 
         let (req, res) = req_res(());
@@ -521,7 +550,7 @@ mod one_for_all {
     #[tokio::test]
     async fn one_for_all_affects_all_actors() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
         let root = node.spawn::<Parent>(());
 
         let (req, res) = req_res(());
@@ -650,7 +679,7 @@ mod one_for_all {
     #[tokio::test]
     async fn escalates_error() {
         // Arrange
-        let node = Node::default();
+        let mut node = Node::default();
 
         // Act
         let root = node.spawn::<EscalateRoot>(());
@@ -722,7 +751,7 @@ mod one_for_all {
     async fn stops_all_children_before_starting_them_again() {
         // Arrange
         let evts = SyncVec::default();
-        let node = Node::default();
+        let mut node = Node::default();
         let dad = node.spawn::<Dad>(evts.clone());
 
         // Act

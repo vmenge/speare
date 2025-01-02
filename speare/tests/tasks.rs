@@ -44,6 +44,7 @@ impl Actor for Root {
     }
 
     async fn exit(_: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+        println!("QUITTING!!! exitreason: {reason:?}");
         if let ExitReason::Err(e) = reason {
             ctx.props().1.push((*e).clone()).await;
         }
@@ -53,7 +54,7 @@ impl Actor for Root {
 #[tokio::test]
 async fn executes_subtasks() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::with_supervision(Supervision::one_for_one().directive(Directive::Stop));
     let (oks, errs) = (SyncVec::default(), SyncVec::default());
     let root = node.spawn::<Root>((oks.clone(), errs.clone()));
 
@@ -117,11 +118,9 @@ impl Actor for RestartRoot {
     fn supervision(_: &Self::Props) -> Supervision {
         Supervision::one_for_one()
             .backoff(Backoff::Static(Duration::from_millis(50)))
-            .when(|e: &Event| {
-                match e {
-                    Event::Restart => Directive::Restart,
-                    _ => Directive::Stop,
-                }
+            .when(|e: &Event| match e {
+                Event::Restart => Directive::Restart,
+                _ => Directive::Stop,
             })
     }
 }
@@ -129,7 +128,7 @@ impl Actor for RestartRoot {
 #[tokio::test]
 async fn subtasks_trigger_proper_supervision() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::default();
     let (tx, rx) = flume::unbounded();
     let vec = SyncVec::default();
     node.spawn::<RestartRoot>((rx, vec.clone()));

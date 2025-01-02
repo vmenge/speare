@@ -113,7 +113,10 @@ impl<Msg> Clone for Handle<Msg> {
 impl<Msg> Handle<Msg> {
     /// Stops the [`Actor`] for which this `Handle<_>` is for.
     pub fn stop(&self) {
-        let _ = self.proc_msg_tx.send(ProcMsg::FromHandle(ProcAction::Stop));
+        let (tx, _) = flume::unbounded();
+        let _ = self
+            .proc_msg_tx
+            .send(ProcMsg::FromHandle(ProcAction::Stop(tx)));
     }
 
     /// Returns true if the [`Actor`] is still running, false if it has been stopped.
@@ -199,7 +202,7 @@ impl<Msg> Handle<Msg> {
     /// use tokio::runtime::Runtime;
     ///
     /// Runtime::new().unwrap().block_on(async {
-    ///     let node = Node::default();
+    ///     let mut node = Node::default();
     ///     let parser = node.spawn::<Parser>(());
     ///
     ///     let num = parser.req("5".to_string()).await.unwrap();
@@ -335,7 +338,6 @@ where
     where
         Child: Actor,
     {
-        self.total_children += 1;
         let (msg_tx, msg_rx) = flume::unbounded(); // child
         let (proc_msg_tx, proc_msg_rx) = flume::unbounded(); // child
 
@@ -346,8 +348,11 @@ where
 
         let supervision = Child::supervision(&props);
 
+        self.total_children += 1;
+        let id = self.total_children;
+
         let ctx: Ctx<Child> = Ctx {
-            id: self.total_children,
+            id,
             props,
             handle: handle.clone(),
             msg_rx,
@@ -374,18 +379,11 @@ where
     where
         F: Future<Output = Result<(), P::Err>> + Send + 'static,
     {
-        let id = self.id;
-        let parent_proc_msg_tx = self.parent_proc_msg_tx.clone();
+        let proc_msg_tx = self.handle.proc_msg_tx.clone();
 
         let task = task::spawn(async move {
             if let Err(e) = future.await {
-                let (tx, rx) = flume::unbounded();
-                let _ = parent_proc_msg_tx.send(ProcMsg::FromChild {
-                    child_id: id,
-                    err: Box::new(SharedErr::new(e)),
-                    ack: tx,
-                });
-                let _ = rx.recv_async().await;
+                let _ = proc_msg_tx.send(ProcMsg::FromSubtask(Box::new(e)));
             }
         });
 
@@ -402,137 +400,133 @@ where
     where
         F: FnOnce() -> Result<(), P::Err> + Send + 'static,
     {
-        let id = self.id;
-        let parent_proc_msg_tx = self.parent_proc_msg_tx.clone();
+        let proc_msg_tx = self.handle.proc_msg_tx.clone();
 
         let task = task::spawn_blocking(move || {
             if let Err(e) = f() {
-                let (tx, rx) = flume::unbounded();
-                let _ = parent_proc_msg_tx.send(ProcMsg::FromChild {
-                    child_id: id,
-                    err: Box::new(SharedErr::new(e)),
-                    ack: tx,
-                });
-                let _ = rx.recv();
+                let _ = proc_msg_tx.send(ProcMsg::FromSubtask(Box::new(e)));
             }
         });
 
         self.tasks.push(task);
     }
+}
 
-    async fn handle_err(
-        &mut self,
-        e: Box<dyn Any + Send>,
-        proc_id: u64,
-        err_ack: Sender<()>,
-    ) -> Option<()> {
-        let directive = self
-            .supervision
-            .deciders
-            .iter()
-            .find_map(|f| f(&e))
-            .unwrap_or(self.supervision.directive);
+async fn handle_err(
+    proc_id: u64,
+    supervision: &mut Supervision,
+    parent: &Sender<ProcMsg>,
+    children: &mut HashMap<u64, Sender<ProcMsg>>,
+    e: Box<dyn Any + Send>,
+    child_proc_id: u64,
+    err_ack: Sender<()>,
+) -> Option<()> {
+    let _ = err_ack.send(());
 
-        match (&mut self.supervision.strategy, directive) {
-            (Strategy::OneForOne { counter }, Directive::Restart) => {
-                let child = self.children_proc_msg_tx.get(&proc_id)?;
-                let child_restarts = counter.entry(proc_id).or_default();
+    let directive = supervision
+        .deciders
+        .iter()
+        .find_map(|f| f(&e))
+        .unwrap_or(supervision.directive);
 
-                match child_restarts
-                    .get_backoff_duration(self.supervision.max_restarts, self.supervision.backoff)
-                {
-                    Some(delay) => {
-                        let _ = child.send(ProcMsg::FromParent(ProcAction::Restart(
-                            Restart::without_ack(delay),
-                        )));
+    match (&mut supervision.strategy, directive) {
+        (Strategy::OneForOne { counter }, Directive::Restart) => {
+            let child = children.get(&child_proc_id)?;
+            let child_restarts = counter.entry(child_proc_id).or_default();
+
+            match child_restarts.get_backoff_duration(supervision.max_restarts, supervision.backoff)
+            {
+                Some(delay) => {
+                    let _ = child.send(ProcMsg::FromParent(ProcAction::Restart(
+                        Restart::without_ack(delay),
+                    )));
+                }
+
+                None => {
+                    // Stop child if max number of resets have been reached
+                    let (ack_tx, ack_rx) = flume::unbounded();
+                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+                    let _ = ack_rx.recv_async().await;
+                    children.remove(&child_proc_id);
+                }
+            }
+        }
+
+        (Strategy::OneForOne { counter }, Directive::Stop) => {
+            let child = children.get(&child_proc_id)?;
+            let (ack_tx, ack_rx) = flume::unbounded();
+
+            let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+            let _ = ack_rx.recv_async().await;
+            counter.remove(&child_proc_id);
+            children.remove(&child_proc_id);
+        }
+
+        (Strategy::OneForAll { counter }, Directive::Restart) => {
+            match counter.get_backoff_duration(supervision.max_restarts, supervision.backoff) {
+                Some(delay) => {
+                    let mut exit_ack_rxs = vec![];
+                    let mut can_restart_txs = vec![];
+
+                    for child in children.values() {
+                        let (restart, exit_ack_rx, can_restart_tx) = Restart::with_ack(delay);
+                        exit_ack_rxs.push(exit_ack_rx);
+                        can_restart_txs.push(can_restart_tx);
+
+                        let _ = child.send(ProcMsg::FromParent(ProcAction::Restart(restart)));
                     }
 
-                    None => {
-                        // Stop child if max number of resets have been reached
-                        let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                        self.children_proc_msg_tx.remove(&proc_id);
+                    for rx in exit_ack_rxs {
+                        let _ = rx.recv_async().await;
+                    }
+
+                    for tx in can_restart_txs {
+                        let _ = tx.send(());
                     }
                 }
 
-                let _ = err_ack.send(());
-            }
-
-            (Strategy::OneForOne { counter }, Directive::Stop) => {
-                let child = self.children_proc_msg_tx.get(&proc_id)?;
-                let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                counter.remove(&proc_id);
-                self.children_proc_msg_tx.remove(&proc_id);
-
-                let _ = err_ack.send(());
-            }
-
-            (Strategy::OneForAll { counter }, Directive::Restart) => {
-                match counter
-                    .get_backoff_duration(self.supervision.max_restarts, self.supervision.backoff)
-                {
-                    Some(delay) => {
-                        let _ = err_ack.send(());
-
-                        let mut exit_ack_rxs = vec![];
-                        let mut can_restart_txs = vec![];
-
-                        for child in self.children_proc_msg_tx.values() {
-                            let (restart, exit_ack_rx, can_restart_tx) = Restart::with_ack(delay);
-                            exit_ack_rxs.push(exit_ack_rx);
-                            can_restart_txs.push(can_restart_tx);
-
-                            let _ = child.send(ProcMsg::FromParent(ProcAction::Restart(restart)));
-                        }
-
-                        for rx in exit_ack_rxs {
-                            let _ = rx.recv_async().await;
-                        }
-
-                        for tx in can_restart_txs {
-                            let _ = tx.send(());
-                        }
+                None => {
+                    let mut acks = vec![];
+                    for child in children.values() {
+                        let (ack_tx, ack_rx) = flume::unbounded();
+                        let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+                        acks.push(ack_rx);
                     }
 
-                    None => {
-                        for child in self.children_proc_msg_tx.values() {
-                            let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                        }
-
-                        self.children_proc_msg_tx.clear();
+                    for ack in acks {
+                        let _ = ack.recv_async().await;
                     }
+
+                    children.clear();
                 }
             }
+        }
 
-            (Strategy::OneForAll { .. }, Directive::Stop) => {
-                let _ = err_ack.send(());
-
-                for child in self.children_proc_msg_tx.values() {
-                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                }
-
-                self.children_proc_msg_tx.clear();
+        (Strategy::OneForAll { .. }, Directive::Stop) => {
+            for child in children.values() {
+                let (ack_tx, ack_rx) = flume::unbounded();
+                let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+                let _ = ack_rx.recv_async().await;
             }
 
-            (_, Directive::Escalate) => {
-                let (tx, _) = flume::unbounded();
-                let _ = self.parent_proc_msg_tx.send(ProcMsg::FromChild {
-                    child_id: self.id,
-                    err: e,
-                    ack: tx,
-                });
+            children.clear();
+        }
 
-                let _ = err_ack.send(());
-            }
+        (_, Directive::Escalate) => {
+            let (tx, _) = flume::unbounded();
+            let _ = parent.send(ProcMsg::FromChild {
+                child_id: proc_id,
+                err: e,
+                ack: tx,
+            });
+        }
 
-            (_, Directive::Resume) => {
-                let _ = err_ack.send(());
-            }
-        };
+        (_, Directive::Resume) => {}
+    };
 
-        task::yield_now().await;
+    task::yield_now().await;
 
-        None
-    }
+    None
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -545,6 +539,7 @@ enum ProcMsg {
     },
     FromParent(ProcAction),
     FromHandle(ProcAction),
+    FromSubtask(Box<dyn Any + Send>),
 }
 
 #[derive(Debug)]
@@ -589,7 +584,7 @@ impl Restart {
 #[derive(Debug)]
 enum ProcAction {
     Restart(Restart),
-    Stop,
+    Stop(Sender<()>),
 }
 
 fn spawn<Parent, Child>(mut ctx: Ctx<Child>, delay: Option<Duration>)
@@ -627,7 +622,9 @@ where
                 }
 
                 for child in ctx.children_proc_msg_tx.values() {
-                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
+                    let (ack_tx, ack_rx) = flume::unbounded();
+                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+                    let _ = ack_rx.recv_async().await;
                 }
 
                 for task in &ctx.tasks {
@@ -646,6 +643,7 @@ where
 
             Ok(mut actor) => {
                 let mut exit_reason = None;
+                let mut stop_ack_tx = None;
 
                 loop {
                     tokio::select! {
@@ -655,13 +653,15 @@ where
                             match proc_msg {
                                 Err(_) => break,
 
-                                Ok(ProcMsg::FromHandle(ProcAction::Stop) ) => {
+                                Ok(ProcMsg::FromHandle(ProcAction::Stop(tx)) ) => {
                                     exit_reason = Some(ExitReason::Handle);
+                                    stop_ack_tx = Some(tx);
                                     break
                                 },
 
-                                Ok( ProcMsg::FromParent(ProcAction::Stop)) => {
+                                Ok(ProcMsg::FromParent(ProcAction::Stop(tx))) => {
                                     exit_reason = exit_reason.or(Some(ExitReason::Parent));
+                                    stop_ack_tx = Some(tx);
                                     break
                                 },
 
@@ -671,8 +671,32 @@ where
                                     break;
                                 }
 
+                                // Child handling Grandchild error
                                 Ok(ProcMsg::FromChild { child_id, err, ack }) => {
-                                    ctx.handle_err(err, child_id, ack).await;
+                                    handle_err(
+                                        ctx.id, &mut ctx.supervision,
+                                        &ctx.parent_proc_msg_tx,
+                                        &mut ctx.children_proc_msg_tx,
+                                        err,
+                                        child_id,
+                                        ack
+                                    ).await;
+                                }
+
+                                // Subtask errors are not forwarded to parent initially,
+                                // but to the same Actor that produced the subtask. This is
+                                // the match case below.
+                                Ok(ProcMsg::FromSubtask(err)) => {
+                                    let err: Box<Child::Err> = err.downcast().unwrap();
+                                    let e = SharedErr::new(*err);
+                                    exit_reason = Some(ExitReason::Err(e.clone()));
+                                    let (tx, rx) = flume::unbounded();
+                                    let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
+                                        child_id: ctx.id,
+                                        err: Box::new(e),
+                                        ack: tx,
+                                    });
+                                    let _ = rx.recv_async().await;
                                 }
 
                                 Ok(_) => ()
@@ -701,8 +725,15 @@ where
                     }
                 }
 
+                let mut acks = vec![];
                 for child in ctx.children_proc_msg_tx.values() {
-                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
+                    let (ack_tx, ack_rx) = flume::unbounded();
+                    let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+                    acks.push(ack_rx);
+                }
+
+                for ack in acks {
+                    let _ = ack.recv_async().await;
                 }
 
                 for task in &ctx.tasks {
@@ -713,6 +744,7 @@ where
 
                 let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
                 Child::exit(Some(actor), exit_reason, &mut ctx).await;
+                let _ = stop_ack_tx.map(|tx| tx.send(()));
 
                 if let Some(r) = restart {
                     r.sync().await;
@@ -723,35 +755,67 @@ where
     });
 }
 
+#[derive(Debug)]
 enum NodeProcMsg {
-    SpawnedChild(Sender<ProcMsg>),
+    SpawnedChild(u64, Sender<ProcMsg>),
     Stop,
 }
 
-fn node_proc() -> Sender<NodeProcMsg> {
-    let (tx, rx) = flume::unbounded();
+fn node_proc(mut supervision: Supervision) -> (Sender<NodeProcMsg>, Sender<ProcMsg>) {
+    let (node_proc_msg_tx, node_proc_msg_rx) = flume::unbounded();
+    let (proc_msg_tx, proc_msg_rx) = flume::unbounded();
+    let (ignore, _) = flume::unbounded();
 
     task::spawn(async move {
-        let mut children = Vec::new();
+        let mut children = HashMap::new();
 
-        while let Ok(msg) = rx.recv_async().await {
-            match msg {
-                NodeProcMsg::SpawnedChild(child) => {
-                    children.push(child);
+        loop {
+            tokio::select! {
+                biased;
+
+                msg = node_proc_msg_rx.recv_async() => {
+                    match msg {
+                        Err(_) => break,
+
+                        Ok(NodeProcMsg::SpawnedChild(id, child)) => {
+                            children.insert(id, child);
+                        }
+
+                        Ok(NodeProcMsg::Stop) => {
+                            let mut acks = vec![];
+                            for child in children.values() {
+                                let (ack_tx, ack_rx) = flume::unbounded();
+                                let _ = child.send(ProcMsg::FromHandle(ProcAction::Stop(ack_tx)));
+                                acks.push(ack_rx);
+                            }
+
+                            for ack in acks {
+                                let _ = ack.recv_async().await;
+                            }
+
+                            break;
+                        }
+                    }
                 }
 
-                NodeProcMsg::Stop => {
-                    for child in &children {
-                        let _ = child.send(ProcMsg::FromHandle(ProcAction::Stop));
+                msg = proc_msg_rx.recv_async() => {
+                    if let Ok(ProcMsg::FromChild { child_id, err, ack }) = msg {
+                        handle_err(
+                            0,
+                            &mut supervision,
+                            &ignore,
+                            &mut children,
+                            err,
+                            child_id,
+                            ack
+                        ).await;
                     }
-
-                    break;
                 }
             }
         }
     });
 
-    tx
+    (node_proc_msg_tx, proc_msg_tx)
 }
 
 /// A `Node` owns a collection of unsupervised top-level actors.
@@ -761,120 +825,69 @@ fn node_proc() -> Sender<NodeProcMsg> {
 /// Unsupervised actors will be stopped when they error. Since they are unsupervised,
 /// the errors won't be handled and they will not be automatically restarted.
 pub struct Node {
-    proc: Sender<NodeProcMsg>,
+    node_proc_msg_tx: Sender<NodeProcMsg>,
+    proc_msg_tx: Sender<ProcMsg>,
+    children_count: u64,
 }
 
 impl Default for Node {
     fn default() -> Self {
-        Self { proc: node_proc() }
+        Self::with_supervision(Supervision::one_for_one())
     }
 }
 
 impl Drop for Node {
     fn drop(&mut self) {
-        let _ = self.proc.send(NodeProcMsg::Stop);
+        let _ = self.node_proc_msg_tx.send(NodeProcMsg::Stop);
     }
 }
 
 impl Node {
-    /// Spawns an unsupervised [`Actor`].
-    pub fn spawn<P>(&self, props: P::Props) -> Handle<P::Msg>
+    pub fn with_supervision(supervision: Supervision) -> Self {
+        let (a, b) = node_proc(supervision);
+
+        Self {
+            node_proc_msg_tx: a,
+            proc_msg_tx: b,
+            children_count: 0,
+        }
+    }
+
+    /// Spawns an [`Actor`].
+    pub fn spawn<P>(&mut self, props: P::Props) -> Handle<P::Msg>
     where
         P: Actor,
     {
         let (msg_tx, msg_rx) = flume::unbounded();
-        let (directive_tx, directive_rx) = flume::unbounded();
-        let (ignore, _) = flume::unbounded();
+        let (proc_msg_tx, proc_msg_rx) = flume::unbounded();
 
         let handle = Handle {
             msg_tx,
-            proc_msg_tx: directive_tx,
+            proc_msg_tx,
         };
 
         let supervision = P::supervision(&props);
 
-        let mut ctx: Ctx<P> = Ctx {
-            id: 0,
+        self.children_count += 1;
+        let id = self.children_count;
+        let ctx: Ctx<P> = Ctx {
+            id,
             total_children: 0,
             props,
             handle: handle.clone(),
             msg_rx,
-            parent_proc_msg_tx: ignore,
-            proc_msg_rx: directive_rx,
+            parent_proc_msg_tx: self.proc_msg_tx.clone(),
+            proc_msg_rx,
             children_proc_msg_tx: Default::default(),
             supervision,
             tasks: vec![],
         };
 
-        tokio::spawn(async move {
-            match P::init(&mut ctx).await {
-                Err(e) => {
-                    for child in ctx.children_proc_msg_tx.values() {
-                        let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                    }
-
-                    task::yield_now().await;
-
-                    P::exit(None, ExitReason::Err(SharedErr::new(e)), &mut ctx).await;
-                }
-
-                Ok(mut actor) => {
-                    let mut exit_reason = None;
-                    loop {
-                        tokio::select! {
-                            biased;
-
-                            proc_msg = ctx.proc_msg_rx.recv_async() => {
-                                match proc_msg {
-                                    Err(_) => break,
-
-                                    Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
-                                        exit_reason = Some(ExitReason::Handle);
-                                        break
-                                    },
-
-                                    Ok(ProcMsg::FromChild { child_id, err, ack }) => {
-                                        ctx.handle_err(err, child_id, ack).await;
-                                    }
-
-                                    _ => {}
-                                }
-                            }
-
-                            recvd = ctx.msg_rx.recv_async() => {
-                                match recvd {
-                                    Err(_) => break,
-
-                                    Ok(msg) => {
-                                        if let Err(e) = actor.handle(msg, &mut ctx).await {
-                                            exit_reason = Some(ExitReason::Err(SharedErr::new(e)));
-                                            break;
-                                        };
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    for child in ctx.children_proc_msg_tx.values() {
-                        let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
-                    }
-
-                    for task in &ctx.tasks {
-                        task.abort();
-                    }
-
-                    task::yield_now().await;
-
-                    let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
-                    P::exit(Some(actor), exit_reason, &mut ctx).await;
-                }
-            }
-        });
+        spawn::<P, P>(ctx, None);
 
         let _ = self
-            .proc
-            .send(NodeProcMsg::SpawnedChild(handle.proc_msg_tx.clone()));
+            .node_proc_msg_tx
+            .send(NodeProcMsg::SpawnedChild(id, handle.proc_msg_tx.clone()));
 
         handle
     }

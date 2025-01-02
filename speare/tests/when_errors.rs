@@ -81,7 +81,7 @@ impl Actor for Parent {
 #[tokio::test]
 async fn it_actor_different_errors_differently() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::default();
     let parent = node.spawn::<Parent>(());
     time::sleep(Duration::from_nanos(1)).await;
 

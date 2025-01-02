@@ -50,7 +50,7 @@ impl Actor for Bar {
 #[tokio::test]
 async fn sends_msgs_in_correct_order() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::default();
     let recvd: SyncVec<_> = Default::default();
     let foo = node.spawn::<Foo>(recvd.clone());
     let bar = node.spawn::<Bar>(recvd.clone());

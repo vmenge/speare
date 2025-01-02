@@ -9,12 +9,12 @@ repository = "https://github.com/vmenge/speare"
 readme = "../README.md"
 
 [dependencies]
-async-trait = { version = "0.1.73" }
-flume = "0.11.0"
-tokio = { version = "1.35.1", features = ["macros", "rt", "sync", "time"] }
+async-trait = { version = "0.1.83" }
+flume = "0.11.1"
+tokio = { version = "1.42.0", features = ["macros", "rt", "sync", "time"] }
 
 [dev-dependencies]
-tokio = { version = "1.35.1", features = [
+tokio = { version = "1.42.0", features = [
   "macros",
   "rt",
   "rt-multi-thread",
@@ -22,4 +22,4 @@ tokio = { version = "1.35.1", features = [
   "time",
   "test-util",
 ] }
-derive_more = "0.99.17"
+derive_more = { version = "1.0.0", features = ["full"] }

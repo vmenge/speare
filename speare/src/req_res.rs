@@ -13,7 +13,7 @@ use tokio::time;
 /// use tokio::runtime::Runtime;
 ///
 /// Runtime::new().unwrap().block_on(async {
-///     let node = Node::default();
+///     let mut node = Node::default();
 ///     let parser = node.spawn::<Parser>(());
 ///
 ///     // use Handle<_>::req if the Actor::Msg
@@ -97,7 +97,7 @@ impl<Req, Res> Request<Req, Res> {
 /// use tokio::runtime::Runtime;
 ///
 /// Runtime::new().unwrap().block_on(async {
-///     let node = Node::default();
+///     let mut node = Node::default();
 ///     let parser = node.spawn::<Parser>(());
 ///
 ///     let (req, res) = req_res("10".to_string());

@@ -1,6 +1,6 @@
 mod sync_vec;
 use async_trait::async_trait;
-use speare::{Actor, Ctx, ExitReason, Node};
+use speare::{Actor, Ctx, Directive, ExitReason, Node, Supervision};
 use sync_vec::SyncVec;
 use tokio::task;
 
@@ -102,7 +102,7 @@ impl Actor for Child2 {
 #[tokio::test]
 async fn on_init_and_on_exit_are_called_in_order() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::default();
     let recvd: SyncVec<_> = Default::default();
     node.spawn::<Foo>(recvd.clone());
     let fail_to_start = false;
@@ -113,6 +113,8 @@ async fn on_init_and_on_exit_are_called_in_order() {
     drop(node);
     task::yield_now().await;
     task::yield_now().await;
+    task::yield_now().await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(
@@ -122,9 +124,10 @@ async fn on_init_and_on_exit_are_called_in_order() {
             TestMsg::Child1Started,
             TestMsg::Child2Started,
             TestMsg::Child2Quit,
+            // Foo quits early as it doesnt have any children
+            TestMsg::FooQuit,
             TestMsg::Child1Quit,
             TestMsg::BarQuit,
-            TestMsg::FooQuit,
         ],
         recvd.clone_vec().await
     )
@@ -134,7 +137,7 @@ async fn on_init_and_on_exit_are_called_in_order() {
 #[tokio::test]
 async fn order_preserved_even_with_startup_failure() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::with_supervision(Supervision::one_for_one().directive(Directive::Stop));
     let recvd: SyncVec<_> = Default::default();
     node.spawn::<Foo>(recvd.clone());
     let fail_to_start = true;
@@ -145,6 +148,7 @@ async fn order_preserved_even_with_startup_failure() {
     drop(node);
     task::yield_now().await;
     task::yield_now().await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(
@@ -154,9 +158,9 @@ async fn order_preserved_even_with_startup_failure() {
             TestMsg::Child1Started,
             TestMsg::Child2Started,
             TestMsg::Child2Quit,
+            TestMsg::FooQuit,
             TestMsg::Child1Quit,
             TestMsg::BarQuit,
-            TestMsg::FooQuit,
         ],
         recvd.clone_vec().await
     )

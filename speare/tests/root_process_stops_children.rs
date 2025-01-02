@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use speare::{req_res, Actor, Ctx, Handle, Node, Request};
+use speare::{req_res, Actor, Ctx, Directive, Handle, Node, Request, Supervision};
 use tokio::task;
 
 struct Foo;
@@ -32,7 +32,7 @@ impl Actor for Bar {
 #[tokio::test]
 async fn node_stops_all_actors_when_dropped() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::default();
     let foo = node.spawn::<Foo>(());
     let bar = node.spawn::<Bar>(());
 
@@ -68,9 +68,9 @@ impl Actor for Quitter {
 }
 
 #[tokio::test]
-async fn root_actor_quits_without_supervision_on_error() {
+async fn root_supervision_works() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::with_supervision(Supervision::one_for_one().directive(Directive::Stop));
     let quit_on_start = false;
     let quitter = node.spawn::<Quitter>(quit_on_start);
     assert!(quitter.is_alive());
@@ -124,7 +124,7 @@ impl Actor for Parent {
 #[tokio::test]
 async fn stopping_a_root_actor_stops_all_its_children() {
     // Arrange
-    let node = Node::default();
+    let mut node = Node::default();
     let parent = node.spawn::<Parent>(());
 
     let (req, res) = req_res(());
