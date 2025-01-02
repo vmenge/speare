@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use speare::{Actor, Ctx, ExitReason, Node};
+use flume::Receiver;
+use speare::{Actor, Backoff, Ctx, Directive, ExitReason, Node, Supervision};
 use std::time::Duration;
 use sync_vec::SyncVec;
 use tokio::time;
@@ -67,4 +68,81 @@ async fn executes_subtasks() {
     assert_eq!(oks.clone_vec().await, vec!["foo", "bar"]);
     assert_eq!(errs.clone_vec().await, vec!["baz"]);
     assert!(!root.is_alive())
+}
+
+struct Restarter;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Event {
+    Start,
+    Stop,
+    Restart,
+}
+
+#[async_trait]
+impl Actor for Restarter {
+    type Props = (Receiver<Event>, SyncVec<Event>);
+    type Msg = ();
+    type Err = Event;
+
+    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        let (restart, vec) = ctx.props().clone();
+        vec.push(Event::Start).await;
+        ctx.subtask(async move {
+            if let Ok(msg) = restart.recv_async().await {
+                return Err(msg);
+            }
+
+            Ok(())
+        });
+
+        Ok(Restarter)
+    }
+}
+
+struct RestartRoot;
+
+#[async_trait]
+impl Actor for RestartRoot {
+    type Props = (Receiver<Event>, SyncVec<Event>);
+    type Msg = ();
+    type Err = ();
+
+    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        ctx.spawn::<Restarter>(ctx.props().clone());
+
+        Ok(RestartRoot)
+    }
+
+    fn supervision(_: &Self::Props) -> Supervision {
+        Supervision::one_for_one()
+            .backoff(Backoff::Static(Duration::from_millis(50)))
+            .when(|e: &Event| {
+                match e {
+                    Event::Restart => Directive::Restart,
+                    _ => Directive::Stop,
+                }
+            })
+    }
+}
+
+#[tokio::test]
+async fn subtasks_trigger_proper_supervision() {
+    // Arrange
+    let node = Node::default();
+    let (tx, rx) = flume::unbounded();
+    let vec = SyncVec::default();
+    node.spawn::<RestartRoot>((rx, vec.clone()));
+
+    // Act
+    tx.send(Event::Restart).unwrap();
+    tx.send(Event::Restart).unwrap();
+    tx.send(Event::Stop).unwrap();
+
+    // Assert
+    time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        vec.clone_vec().await,
+        vec![Event::Start, Event::Start, Event::Start,]
+    );
 }

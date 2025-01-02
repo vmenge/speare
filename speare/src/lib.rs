@@ -374,11 +374,18 @@ where
     where
         F: Future<Output = Result<(), P::Err>> + Send + 'static,
     {
-        let proc_msg_tx = self.handle.proc_msg_tx.clone();
+        let id = self.id;
+        let parent_proc_msg_tx = self.parent_proc_msg_tx.clone();
 
         let task = task::spawn(async move {
             if let Err(e) = future.await {
-                let _ = proc_msg_tx.send(ProcMsg::TaskErr(Box::new(e)));
+                let (tx, rx) = flume::unbounded();
+                let _ = parent_proc_msg_tx.send(ProcMsg::FromChild {
+                    child_id: id,
+                    err: Box::new(SharedErr::new(e)),
+                    ack: tx,
+                });
+                let _ = rx.recv_async().await;
             }
         });
 
@@ -395,11 +402,18 @@ where
     where
         F: FnOnce() -> Result<(), P::Err> + Send + 'static,
     {
-        let proc_msg_tx = self.handle.proc_msg_tx.clone();
+        let id = self.id;
+        let parent_proc_msg_tx = self.parent_proc_msg_tx.clone();
 
         let task = task::spawn_blocking(move || {
             if let Err(e) = f() {
-                let _ = proc_msg_tx.send(ProcMsg::TaskErr(Box::new(e)));
+                let (tx, rx) = flume::unbounded();
+                let _ = parent_proc_msg_tx.send(ProcMsg::FromChild {
+                    child_id: id,
+                    err: Box::new(SharedErr::new(e)),
+                    ack: tx,
+                });
+                let _ = rx.recv();
             }
         });
 
@@ -529,7 +543,6 @@ enum ProcMsg {
         err: Box<dyn Any + Send>,
         ack: Sender<()>,
     },
-    TaskErr(Box<dyn Any + Send>),
     FromParent(ProcAction),
     FromHandle(ProcAction),
 }
@@ -641,13 +654,6 @@ where
                         proc_msg = ctx.proc_msg_rx.recv_async() => {
                             match proc_msg {
                                 Err(_) => break,
-
-                                Ok(ProcMsg::TaskErr(e)) => {
-                                    let e: Box<Child::Err> = e.downcast().unwrap();
-                                    let e = SharedErr::new(*e);
-                                    exit_reason = Some(ExitReason::Err(e));
-                                    break;
-                                }
 
                                 Ok(ProcMsg::FromHandle(ProcAction::Stop) ) => {
                                     exit_reason = Some(ExitReason::Handle);
@@ -821,13 +827,6 @@ impl Node {
                             proc_msg = ctx.proc_msg_rx.recv_async() => {
                                 match proc_msg {
                                     Err(_) => break,
-
-                                    Ok(ProcMsg::TaskErr(e)) => {
-                                        let e: Box<P::Err> = e.downcast().unwrap();
-                                        let e = SharedErr::new(*e);
-                                        exit_reason = Some(ExitReason::Err(e));
-                                        break;
-                                    }
 
                                     Ok(ProcMsg::FromHandle(ProcAction::Stop) | ProcMsg::FromParent(ProcAction::Stop)) => {
                                         exit_reason = Some(ExitReason::Handle);

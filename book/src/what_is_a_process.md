@@ -15,7 +15,7 @@ A `Actor` is comprised of a few parts:
 
     *Required*. Used by `speare` to create new instances of your `Actor` whenever it is spawned or restarted.
 
-- **async fn exit**: `(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>)`
+- **async fn exit**: `(this: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>)`
 
     *Optional*. Called every time your `Actor` is stopped, be it manually through its `Handle<_>` or
     by the parent through its [supervision strategy](./supervision.md).
@@ -74,7 +74,7 @@ impl Actor for Counter {
         })
     }
 
-    async fn exit(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    async fn exit(this: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         println!("Counter exiting due to: {:?}", reason);
     }
 
