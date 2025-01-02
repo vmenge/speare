@@ -79,8 +79,10 @@ pub trait Actor: Sized + Send + 'static {
     /// when spawning or restarting it.
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err>;
 
-    /// A function that will be called if your [`Actor`] is stopped or restarted.
-    async fn exit(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {}
+    /// A function that will be called if your [`Actor`] fails to init, is stopped or restarted.
+    ///
+    /// `this` is `None` if the [`Actor`] is failing on `init`.
+    async fn exit(this: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {}
 
     /// Called everytime your [`Actor`] receives a message.
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
@@ -387,7 +389,7 @@ where
     /// Spawned thread is owned by this [`Actor`] and managed by the tokio threadpool
     ///
     /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
-    /// When the [`Actor`] owning the task terminates, all tasks are forcefully aborted.
+    /// Due to being a blocking task, when the [`Actor`] owning the task terminates, this task will not be forcefully aborted.
     /// See [`tokio::task::spawn_blocking`] for more on blocking tasks
     pub fn subtask_blocking<F>(&mut self, f: F)
     where
@@ -591,10 +593,11 @@ where
 
         match Child::init(&mut ctx).await {
             Err(e) => {
+                let shared_err = SharedErr::new(e);
                 let (tx, rx) = flume::unbounded();
                 let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
                     child_id: ctx.id,
-                    err: Box::new(SharedErr::new(e)),
+                    err: Box::new(shared_err.clone()),
                     ack: tx,
                 });
                 let _ = rx.recv_async().await;
@@ -619,6 +622,8 @@ where
                 }
 
                 task::yield_now().await;
+
+                Child::exit(None, ExitReason::Err(shared_err), &mut ctx).await;
 
                 if let Some(r) = restart {
                     r.sync().await;
@@ -701,7 +706,7 @@ where
                 task::yield_now().await;
 
                 let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
-                actor.exit(exit_reason, &mut ctx).await;
+                Child::exit(Some(actor), exit_reason, &mut ctx).await;
 
                 if let Some(r) = restart {
                     r.sync().await;
@@ -797,12 +802,14 @@ impl Node {
 
         tokio::spawn(async move {
             match P::init(&mut ctx).await {
-                Err(_) => {
+                Err(e) => {
                     for child in ctx.children_proc_msg_tx.values() {
                         let _ = child.send(ProcMsg::FromParent(ProcAction::Stop));
                     }
 
                     task::yield_now().await;
+
+                    P::exit(None, ExitReason::Err(SharedErr::new(e)), &mut ctx).await;
                 }
 
                 Ok(mut actor) => {
@@ -861,7 +868,7 @@ impl Node {
                     task::yield_now().await;
 
                     let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
-                    actor.exit(exit_reason, &mut ctx).await;
+                    P::exit(Some(actor), exit_reason, &mut ctx).await;
                 }
             }
         });

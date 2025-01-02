@@ -2,8 +2,8 @@ use flume::{Receiver, Sender};
 use std::{fmt, time::Duration};
 use tokio::time;
 
-/// Represents a request sent to a `Actor `.
-/// `Request` holds the data sent to a `Actor ` and provides a channel to reply back to the sender.
+/// Represents a request sent to a `Actor`.
+/// `Request` holds the data sent to a `Actor` and provides a channel to reply back to the sender.
 ///
 /// ## Example
 /// ```
@@ -87,7 +87,7 @@ impl<Req, Res> Request<Req, Res> {
     }
 }
 
-///`Response<Res>` is used to asynchronously wait for and retrieve the result of a `Request<Req, Res>` sent to a `Actor `.
+///`Response<Res>` is used to asynchronously wait for and retrieve the result of a `Request<Req, Res>` sent to a `Actor`.
 ///
 /// ## Example
 /// ```

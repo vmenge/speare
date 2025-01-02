@@ -30,7 +30,7 @@ impl Actor for Foo {
         Ok(Foo)
     }
 
-    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().push(TestMsg::FooQuit).await;
     }
 }
@@ -56,7 +56,7 @@ impl Actor for Bar {
         }
     }
 
-    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().0.push(TestMsg::BarQuit).await;
     }
 }
@@ -75,7 +75,7 @@ impl Actor for Child1 {
         Ok(Child1)
     }
 
-    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().push(TestMsg::Child1Quit).await;
     }
 }
@@ -93,7 +93,7 @@ impl Actor for Child2 {
         Ok(Child2)
     }
 
-    async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         ctx.props().push(TestMsg::Child2Quit).await;
     }
 }
@@ -134,7 +134,7 @@ async fn on_init_and_on_exit_are_called_in_order() {
 #[tokio::test]
 async fn order_preserved_even_with_startup_failure() {
     // Arrange
-    let mut node = Node::default();
+    let node = Node::default();
     let recvd: SyncVec<_> = Default::default();
     node.spawn::<Foo>(recvd.clone());
     let fail_to_start = true;
@@ -155,8 +155,8 @@ async fn order_preserved_even_with_startup_failure() {
             TestMsg::Child2Started,
             TestMsg::Child2Quit,
             TestMsg::Child1Quit,
+            TestMsg::BarQuit,
             TestMsg::FooQuit,
-            // No TestMsg::BarQuit because Foo failed to even start
         ],
         recvd.clone_vec().await
     )

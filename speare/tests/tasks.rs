@@ -42,7 +42,7 @@ impl Actor for Root {
         Ok(())
     }
 
-    async fn exit(&mut self, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    async fn exit(_: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {
         if let ExitReason::Err(e) = reason {
             ctx.props().1.push((*e).clone()).await;
         }

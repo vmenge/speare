@@ -38,7 +38,7 @@ impl Actor for Child {
         Ok(())
     }
 
-    async fn exit(&mut self, reason: ExitReason<Self>, _: &mut Ctx<Self>) {
+    async fn exit(_: Option<Self>, reason: ExitReason<Self>, _: &mut Ctx<Self>) {
         println!("Child exiting. {:?}", reason);
     }
 }
@@ -680,7 +680,7 @@ mod one_for_all {
             Ok(Self { kid0 })
         }
 
-        async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+        async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
             ctx.props().push("Dad::exit".to_string()).await;
         }
 
@@ -708,7 +708,7 @@ mod one_for_all {
             Ok(Self)
         }
 
-        async fn exit(&mut self, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+        async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
             let (id, evts) = ctx.props();
             evts.push(format!("Kid{id}::exit")).await;
         }

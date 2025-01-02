@@ -364,7 +364,7 @@ pub(crate) enum Strategy {
 }
 
 #[derive(Clone, Copy, Debug)]
-/// Action to take after a `Actor ` errors.
+/// Action to take after a `Actor` errors.
 pub enum Directive {
     /// Resumes the actor(s) as if nothing happened.
     Resume,
@@ -377,7 +377,7 @@ pub enum Directive {
 }
 
 #[derive(Clone, Copy, Debug)]
-/// How long to wait before restarting a `Actor ` that errored.
+/// How long to wait before restarting a `Actor` that errored.
 pub enum Backoff {
     /// Uses the same backoff duration for every restart.
     Static(Duration),
