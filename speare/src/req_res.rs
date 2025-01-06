@@ -8,7 +8,6 @@ use tokio::time;
 /// ## Example
 /// ```
 /// use speare::{req_res, Ctx, Node, Actor, Request};
-/// use async_trait::async_trait;
 /// use derive_more::From;
 /// use tokio::runtime::Runtime;
 ///
@@ -35,7 +34,6 @@ use tokio::time;
 ///     Parse(Request<String, u32>),
 /// }
 ///
-/// #[async_trait]
 /// impl Actor for Parser {
 ///     type Props = ();
 ///     type Msg = ParserMsg;
@@ -92,7 +90,6 @@ impl<Req, Res> Request<Req, Res> {
 /// ## Example
 /// ```
 /// use speare::{req_res, Ctx, Node, Actor, Request};
-/// use async_trait::async_trait;
 /// use derive_more::From;
 /// use tokio::runtime::Runtime;
 ///
@@ -113,7 +110,6 @@ impl<Req, Res> Request<Req, Res> {
 ///     Parse(Request<String, u32>),
 /// }
 ///
-/// #[async_trait]
 /// impl Actor for Parser {
 ///     type Props = ();
 ///     type Msg = ParserMsg;
@@ -190,7 +186,6 @@ impl<Res> Response<Res> {
 /// ## Example
 /// ```
 /// use speare::{req_res, Ctx, Node, Actor, Request};
-/// use async_trait::async_trait;
 /// use derive_more::From;
 /// use tokio::runtime::Runtime;
 ///
@@ -211,7 +206,6 @@ impl<Res> Response<Res> {
 ///     Parse(Request<String, u32>),
 /// }
 ///
-/// #[async_trait]
 /// impl Actor for Parser {
 ///     type Props = ();
 ///     type Msg = ParserMsg;

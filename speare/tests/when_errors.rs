@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use speare::{req_res, Actor, Ctx, Directive, Handle, Node, Request, Supervision};
 use std::time::Duration;
 use tokio::time;
@@ -7,7 +6,6 @@ struct Foo;
 
 struct FooErr(Handle<ParentMsg>);
 
-#[async_trait]
 impl Actor for Foo {
     type Props = Handle<ParentMsg>;
     type Msg = ();
@@ -22,7 +20,6 @@ struct Bar;
 
 struct BarErr(Handle<ParentMsg>);
 
-#[async_trait]
 impl Actor for Bar {
     type Props = Handle<ParentMsg>;
     type Msg = ();
@@ -42,7 +39,6 @@ enum ParentMsg {
     GetMsgs(Request<(), Vec<String>>),
 }
 
-#[async_trait]
 impl Actor for Parent {
     type Props = ();
     type Msg = ParentMsg;

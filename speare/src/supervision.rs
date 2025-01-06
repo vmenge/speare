@@ -227,12 +227,10 @@ impl Supervision {
     /// ## Examples
     ///
     /// ```
-    /// use async_trait::async_trait;
     /// use speare::{Ctx, Directive, Node, Actor, Supervision};
     ///
     /// struct Parent;
     ///
-    /// #[async_trait]
     /// impl Actor for Parent {
     ///     type Props = ();
     ///     type Msg = ();
@@ -255,7 +253,6 @@ impl Supervision {
     ///
     /// struct FooErr(String);
     ///
-    /// #[async_trait]
     /// impl Actor for Foo {
     ///     type Props = ();
     ///     type Msg = ();
@@ -270,7 +267,6 @@ impl Supervision {
     ///
     /// struct BarErr(String);
     ///
-    /// #[async_trait]
     /// impl Actor for Bar {
     ///     type Props = ();
     ///     type Msg = ();

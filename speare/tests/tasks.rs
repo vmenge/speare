@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use flume::Receiver;
 use speare::{Actor, Backoff, Ctx, Directive, ExitReason, Node, Supervision};
 use std::time::Duration;
@@ -14,7 +13,6 @@ enum Msg {
     TaskErr(String),
 }
 
-#[async_trait]
 impl Actor for Root {
     type Props = (SyncVec<String>, SyncVec<String>);
     type Msg = Msg;
@@ -80,7 +78,6 @@ enum Event {
     Restart,
 }
 
-#[async_trait]
 impl Actor for Restarter {
     type Props = (Receiver<Event>, SyncVec<Event>);
     type Msg = ();
@@ -103,7 +100,6 @@ impl Actor for Restarter {
 
 struct RestartRoot;
 
-#[async_trait]
 impl Actor for RestartRoot {
     type Props = (Receiver<Event>, SyncVec<Event>);
     type Msg = ();

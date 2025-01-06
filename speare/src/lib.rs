@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use flume::{Receiver, Sender};
 use std::{any::Any, collections::HashMap, future::Future, time::Duration};
 use tokio::{
@@ -20,7 +19,6 @@ pub use supervision::*;
 /// ## Example
 /// ```
 /// use speare::{Ctx, Actor};
-/// use async_trait::async_trait;
 /// use derive_more::From;
 ///
 /// struct Counter {
@@ -41,7 +39,6 @@ pub use supervision::*;
 ///     MaxCountExceeded,
 /// }
 ///
-/// #[async_trait]
 /// impl Actor for Counter {
 ///     type Props = CounterProps;
 ///     type Msg = CounterMsg;
@@ -69,7 +66,6 @@ pub use supervision::*;
 /// }
 /// ```
 #[allow(unused_variables)]
-#[async_trait]
 pub trait Actor: Sized + Send + 'static {
     type Props: Send + 'static;
     type Msg: Send + 'static;
@@ -77,16 +73,26 @@ pub trait Actor: Sized + Send + 'static {
 
     /// The constructor function that will be used to create an instance of your [`Actor`]
     /// when spawning or restarting it.
-    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err>;
+    fn init(ctx: &mut Ctx<Self>) -> impl Future<Output = Result<Self, Self::Err>> + Send;
 
     /// A function that will be called if your [`Actor`] fails to init, is stopped or restarted.
     ///
     /// `this` is `None` if the [`Actor`] is failing on `init`.
-    async fn exit(this: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {}
+    fn exit(
+        this: Option<Self>,
+        reason: ExitReason<Self>,
+        ctx: &mut Ctx<Self>,
+    ) -> impl Future<Output = ()> + Send {
+        async {}
+    }
 
     /// Called everytime your [`Actor`] receives a message.
-    async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-        Ok(())
+    fn handle(
+        &mut self,
+        msg: Self::Msg,
+        ctx: &mut Ctx<Self>,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send {
+        async { Ok(()) }
     }
 
     /// Allows to determine custom strategies for handling errors from child actors.
@@ -131,7 +137,6 @@ impl<Msg> Handle<Msg> {
     /// ## Example
     /// ```
     /// use speare::{Ctx, Node, Actor};
-    /// use async_trait::async_trait;
     /// use derive_more::From;
     /// use tokio::runtime::Runtime;
     ///
@@ -152,7 +157,6 @@ impl<Msg> Handle<Msg> {
     ///     Print,
     /// }
     ///
-    /// #[async_trait]
     /// impl Actor for Counter {
     ///     type Props = ();
     ///     type Msg = CounterMsg;
@@ -197,7 +201,6 @@ impl<Msg> Handle<Msg> {
     /// ## Example
     /// ```
     /// use speare::{req_res, Ctx, Node, Actor, Request};
-    /// use async_trait::async_trait;
     /// use derive_more::From;
     /// use tokio::runtime::Runtime;
     ///
@@ -216,7 +219,6 @@ impl<Msg> Handle<Msg> {
     ///     Parse(Request<String, u32>),
     /// }
     ///
-    /// #[async_trait]
     /// impl Actor for Parser {
     ///     type Props = ();
     ///     type Msg = ParserMsg;

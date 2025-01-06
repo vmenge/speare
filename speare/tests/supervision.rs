@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use derive_more::From;
 use speare::{req_res, Actor, Ctx, Directive, ExitReason, Handle, Node, Request, Supervision};
 use std::time::Duration;
@@ -18,7 +17,6 @@ enum ChildMsg {
 
 type Id = u32;
 
-#[async_trait]
 impl Actor for Child {
     type Props = Id;
     type Msg = ChildMsg;
@@ -50,7 +48,6 @@ mod one_for_one {
         child: Handle<ChildMsg>,
     }
 
-    #[async_trait]
     impl Actor for MaxResetAmount {
         type Props = ();
         type Msg = Request<(), Handle<ChildMsg>>;
@@ -137,7 +134,6 @@ mod one_for_one {
         child: Handle<ChildMsg>,
     }
 
-    #[async_trait]
     impl Actor for MaxResetWithin {
         type Props = ();
         type Msg = Request<(), Handle<ChildMsg>>;
@@ -202,7 +198,6 @@ mod one_for_one {
         child2: Handle<ChildMsg>,
     }
 
-    #[async_trait]
     impl Actor for Parent {
         type Props = ();
         type Msg = Request<(), Parent>;
@@ -291,7 +286,6 @@ mod one_for_one {
         GetErrs(Request<(), Vec<String>>),
     }
 
-    #[async_trait]
     impl Actor for EscalateRoot {
         type Props = ();
         type Msg = EscalateRootMsg;
@@ -329,7 +323,6 @@ mod one_for_one {
     #[derive(From)]
     struct EscalateParentErr(Handle<EscalateRootMsg>);
 
-    #[async_trait]
     impl Actor for EscalateParent {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
@@ -350,7 +343,6 @@ mod one_for_one {
     #[derive(From)]
     struct EscalateChildErr(Handle<EscalateRootMsg>);
 
-    #[async_trait]
     impl Actor for EscalateChild {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
@@ -387,7 +379,6 @@ mod one_for_all {
         child1: Handle<ChildMsg>,
     }
 
-    #[async_trait]
     impl Actor for MaxResetAmount {
         type Props = ();
         type Msg = Request<(), Self>;
@@ -451,7 +442,6 @@ mod one_for_all {
         child1: Handle<ChildMsg>,
     }
 
-    #[async_trait]
     impl Actor for MaxResetWithin {
         type Props = ();
         type Msg = Request<(), Self>;
@@ -519,7 +509,6 @@ mod one_for_all {
         child2: Handle<ChildMsg>,
     }
 
-    #[async_trait]
     impl Actor for Parent {
         type Props = ();
         type Msg = Request<(), Parent>;
@@ -606,7 +595,6 @@ mod one_for_all {
         GetErrs(Request<(), Vec<String>>),
     }
 
-    #[async_trait]
     impl Actor for EscalateRoot {
         type Props = ();
         type Msg = EscalateRootMsg;
@@ -644,7 +632,6 @@ mod one_for_all {
     #[derive(From)]
     struct EscalateParentErr(Handle<EscalateRootMsg>);
 
-    #[async_trait]
     impl Actor for EscalateParent {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
@@ -665,7 +652,6 @@ mod one_for_all {
     #[derive(From)]
     struct EscalateChildErr(Handle<EscalateRootMsg>);
 
-    #[async_trait]
     impl Actor for EscalateChild {
         type Props = Handle<EscalateRootMsg>;
         type Msg = ();
@@ -694,7 +680,6 @@ mod one_for_all {
         kid0: Handle<()>,
     }
 
-    #[async_trait]
     impl Actor for Dad {
         type Props = SyncVec<String>;
         type Msg = ();
@@ -725,7 +710,6 @@ mod one_for_all {
 
     struct Kid;
 
-    #[async_trait]
     impl Actor for Kid {
         type Props = (Id, SyncVec<String>);
         type Msg = ();

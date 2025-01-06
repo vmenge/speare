@@ -1,10 +1,8 @@
-use async_trait::async_trait;
 use speare::{req_res, Actor, Ctx, Directive, Handle, Node, Request, Supervision};
 use tokio::task;
 
 struct Foo;
 
-#[async_trait]
 impl Actor for Foo {
     type Props = ();
     type Msg = ();
@@ -17,7 +15,6 @@ impl Actor for Foo {
 
 struct Bar;
 
-#[async_trait]
 impl Actor for Bar {
     type Props = ();
     type Msg = ();
@@ -48,7 +45,6 @@ async fn node_stops_all_actors_when_dropped() {
 
 struct Quitter;
 
-#[async_trait]
 impl Actor for Quitter {
     type Props = bool;
     type Msg = ();
@@ -100,7 +96,6 @@ struct Parent {
     bar: Handle<()>,
 }
 
-#[async_trait]
 impl Actor for Parent {
     type Props = ();
     type Msg = Request<(), (Handle<()>, Handle<()>)>;

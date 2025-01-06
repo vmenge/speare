@@ -1,5 +1,4 @@
 mod sync_vec;
-use async_trait::async_trait;
 use speare::{Actor, Ctx, Node};
 use sync_vec::SyncVec;
 use tokio::task;
@@ -12,7 +11,6 @@ enum TestMsg {
 
 struct Foo;
 
-#[async_trait]
 impl Actor for Foo {
     type Props = SyncVec<TestMsg>;
     type Msg = TestMsg;
@@ -30,7 +28,6 @@ impl Actor for Foo {
 
 struct Bar;
 
-#[async_trait]
 impl Actor for Bar {
     type Props = SyncVec<TestMsg>;
     type Msg = TestMsg;
