@@ -37,7 +37,6 @@ Below is an example of a `Actor` making use of all its associated types and trai
 
 ```rs
 use speare::*;
-use async_trait::async_trait;
 
 struct Counter {
     count: u32,
@@ -60,7 +59,6 @@ enum CounterErr {
     MinCountExceeded,
 }
 
-#[async_trait]
 impl Actor for Counter {
     type Props = CounterProps;
     type Msg = CounterMsg;

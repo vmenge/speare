@@ -11,7 +11,6 @@ Below is an example of a very minimal `Counter` `Actor`.
 
 ```rust
 use speare::*;
-use async_trait::async_trait;
 use tokio::time;
 
 struct Counter {
@@ -24,7 +23,6 @@ enum CounterMsg {
     Print
 }
 
-#[async_trait]
 impl Actor for Counter {
     type Props = ();
     type Msg = CounterMsg;
