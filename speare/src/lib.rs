@@ -99,6 +99,10 @@ pub trait Actor: Sized + Send + 'static {
     fn supervision(props: &Self::Props) -> Supervision {
         Supervision::one_for_one()
     }
+
+    fn intervals() -> &'static [(Duration, &'static str)] {
+        &[]
+    }
 }
 
 /// A handle to send messages to or stop a `Proccess`.
@@ -373,45 +377,6 @@ where
 
         handle
     }
-
-    /// Spawns a task owned by this [`Actor `].
-    /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
-    /// When the [`Actor`] owning the task terminates, all tasks are forcefully aborted.
-    pub fn subtask<F>(&mut self, future: F)
-    where
-        F: Future<Output = Result<(), P::Err>> + Send + 'static,
-    {
-        let proc_msg_tx = self.handle.proc_msg_tx.clone();
-
-        let task = task::spawn(async move {
-            if let Err(e) = future.await {
-                let _ = proc_msg_tx.send(ProcMsg::FromSubtask(Box::new(e)));
-            }
-        });
-
-        self.tasks.push(task);
-    }
-
-    /// Runs the provided closure on a thread where blocking is acceptable.
-    /// Spawned thread is owned by this [`Actor`] and managed by the tokio threadpool
-    ///
-    /// An error from this task counts as an error from the [`Actor`] that spawned it, invoking [`Actor::exit`] and regular error routines.
-    /// Due to being a blocking task, when the [`Actor`] owning the task terminates, this task will not be forcefully aborted.
-    /// See [`tokio::task::spawn_blocking`] for more on blocking tasks
-    pub fn subtask_blocking<F>(&mut self, f: F)
-    where
-        F: FnOnce() -> Result<(), P::Err> + Send + 'static,
-    {
-        let proc_msg_tx = self.handle.proc_msg_tx.clone();
-
-        let task = task::spawn_blocking(move || {
-            if let Err(e) = f() {
-                let _ = proc_msg_tx.send(ProcMsg::FromSubtask(Box::new(e)));
-            }
-        });
-
-        self.tasks.push(task);
-    }
 }
 
 async fn handle_err(
@@ -541,7 +506,6 @@ enum ProcMsg {
     },
     FromParent(ProcAction),
     FromHandle(ProcAction),
-    FromSubtask(Box<dyn Any + Send>),
 }
 
 #[derive(Debug)]
@@ -683,22 +647,6 @@ where
                                         child_id,
                                         ack
                                     ).await;
-                                }
-
-                                // Subtask errors are not forwarded to parent initially,
-                                // but to the same Actor that produced the subtask. This is
-                                // the match case below.
-                                Ok(ProcMsg::FromSubtask(err)) => {
-                                    let err: Box<Child::Err> = err.downcast().unwrap();
-                                    let e = SharedErr::new(*err);
-                                    exit_reason = Some(ExitReason::Err(e.clone()));
-                                    let (tx, rx) = flume::unbounded();
-                                    let _ = ctx.parent_proc_msg_tx.send(ProcMsg::FromChild {
-                                        child_id: ctx.id,
-                                        err: Box::new(e),
-                                        ack: tx,
-                                    });
-                                    let _ = rx.recv_async().await;
                                 }
 
                                 Ok(_) => ()
