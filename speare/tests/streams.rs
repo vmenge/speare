@@ -18,10 +18,12 @@ impl<T> Stream for ChannelStream<T> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
         match self.rx.try_recv() {
             Ok(item) => Poll::Ready(Some(item)),
+
             Err(flume::TryRecvError::Empty) => {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
+
             Err(flume::TryRecvError::Disconnected) => Poll::Ready(None),
         }
     }
@@ -61,7 +63,10 @@ async fn actor_receives_messages_from_stream() {
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
     let (tx, stream) = channel_stream();
-    let _handle = node.actor::<Collector>(recvd.clone()).stream(stream).spawn();
+    let _handle = node
+        .actor::<Collector>(recvd.clone())
+        .stream(stream)
+        .spawn();
 
     // Act
     tx.send(Msg::A(1)).unwrap();
@@ -78,7 +83,10 @@ async fn actor_receives_from_both_handle_and_stream() {
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
     let (tx, stream) = channel_stream();
-    let handle = node.actor::<Collector>(recvd.clone()).stream(stream).spawn();
+    let handle = node
+        .actor::<Collector>(recvd.clone())
+        .stream(stream)
+        .spawn();
 
     // Act
     handle.send(Msg::A(1));
@@ -123,7 +131,10 @@ async fn actor_stops_cleanly_with_active_stream() {
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
     let (tx, stream) = channel_stream();
-    let handle = node.actor::<Collector>(recvd.clone()).stream(stream).spawn();
+    let handle = node
+        .actor::<Collector>(recvd.clone())
+        .stream(stream)
+        .spawn();
 
     tx.send(Msg::A(1)).unwrap();
     task::yield_now().await;

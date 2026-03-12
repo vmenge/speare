@@ -9,11 +9,15 @@ use tokio::{
 mod exit;
 mod req_res;
 mod streams;
+mod watch;
 
 pub use exit::*;
 pub use req_res::*;
 
-use crate::streams::{IntervalStream, Merge, NoStream};
+use crate::{
+    streams::{IntervalStream, Merge, NoStream},
+    watch::{NoWatch, OnErrTerminate, WatchFn},
+};
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
 /// with a supervision tree to handle failures.
@@ -225,7 +229,6 @@ where
     supervision: Supervision,
     total_children: u64,
     tasks: JoinSet<Result<P::Msg, P::Err>>,
-    err_sender: Option<Sender<P::Err>>,
     restarts: u64,
 }
 
@@ -297,10 +300,11 @@ enum ProcAction {
     Stop(Sender<()>),
 }
 
-fn spawn<Child, S>(mut ctx: Ctx<Child>, delay: Option<Duration>, mut stream: S)
+fn spawn<Child, S, W>(mut ctx: Ctx<Child>, delay: Option<Duration>, mut stream: S, watch: W)
 where
     Child: Actor,
     S: Stream<Item = Child::Msg> + Send + Unpin + 'static,
+    W: OnErrTerminate<Child::Err>,
 {
     tokio::spawn(async move {
         if let Some(d) = delay.filter(|d| !d.is_zero()) {
@@ -413,28 +417,19 @@ where
             ctx.restarts += 1;
         }
 
+        if let (Restart::No, ExitReason::Err(ref e)) = (&restart, &exit_reason) {
+            watch.on_err_terminate(e);
+        }
+
         Child::exit(actor_created, exit_reason, &mut ctx).await;
         let _ = stop_ack_tx.map(|tx| tx.send(()));
 
         if let Restart::In(duration) = restart {
-            spawn::<Child, S>(ctx, Some(duration), stream)
+            spawn::<Child, S, W>(ctx, Some(duration), stream, watch)
         } else if let Some(parent_tx) = ctx.parent_proc_msg_tx {
             let _ = parent_tx.send(ProcMsg::ChildTerminated { child_id: ctx.id });
         }
     });
-}
-
-pub struct SpawnBuilder<'a, Parent, Child, S = NoStream<<Child as Actor>::Msg>>
-where
-    Parent: Actor,
-    Child: Actor,
-{
-    ctx: &'a mut Ctx<Parent>,
-    props: Child::Props,
-    supervision: Supervision,
-    /// Only kicks in if child is stopped or reaches maximum number of restarts.
-    watch: bool,
-    stream: S,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -479,7 +474,20 @@ impl PartialEq<u64> for Limit {
     }
 }
 
-impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child, NoStream<Child::Msg>>
+pub struct SpawnBuilder<'a, Parent, Child, S = NoStream<<Child as Actor>::Msg>, W = NoWatch>
+where
+    Parent: Actor,
+    Child: Actor,
+{
+    ctx: &'a mut Ctx<Parent>,
+    props: Child::Props,
+    supervision: Supervision,
+    /// Only kicks in if child is stopped or reaches maximum number of restarts.
+    watch: W,
+    stream: S,
+}
+
+impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child, NoStream<Child::Msg>, NoWatch>
 where
     Parent: Actor,
     Child: Actor,
@@ -490,16 +498,17 @@ where
             props,
             supervision: Supervision::Stop,
             stream: NoStream(PhantomData),
-            watch: false,
+            watch: NoWatch,
         }
     }
 }
 
-impl<'a, Parent, Child, S> SpawnBuilder<'a, Parent, Child, S>
+impl<'a, Parent, Child, S, W> SpawnBuilder<'a, Parent, Child, S, W>
 where
     Parent: Actor,
     Child: Actor,
     S: Stream<Item = Child::Msg> + Send + Unpin + 'static,
+    W: OnErrTerminate<Child::Err>,
 {
     pub fn supervision(mut self, supervision: Supervision) -> Self {
         self.supervision = supervision;
@@ -510,19 +519,28 @@ where
         self,
         interval: Interval,
         f: F,
-    ) -> SpawnBuilder<'a, Parent, Child, Merge<S, IntervalStream<F>>>
+    ) -> SpawnBuilder<'a, Parent, Child, Merge<S, IntervalStream<F>>, W>
     where
         F: Fn() -> Child::Msg + Send + Unpin + 'static,
     {
         self.stream(IntervalStream { interval, f })
     }
 
-    pub fn watch(mut self) -> Self {
-        self.watch = true;
-        self
+    pub fn watch<F>(self, f: F) -> SpawnBuilder<'a, Parent, Child, S, WatchFn<F, Parent::Msg>>
+    where
+        F: Fn(&Child::Err) -> Parent::Msg + Send + 'static,
+    {
+        let parent_msg_tx = self.ctx.handle.msg_tx.clone();
+        SpawnBuilder {
+            ctx: self.ctx,
+            props: self.props,
+            supervision: self.supervision,
+            watch: WatchFn { f, parent_msg_tx },
+            stream: self.stream,
+        }
     }
 
-    pub fn stream<S2>(self, stream: S2) -> SpawnBuilder<'a, Parent, Child, Merge<S, S2>>
+    pub fn stream<S2>(self, stream: S2) -> SpawnBuilder<'a, Parent, Child, Merge<S, S2>, W>
     where
         S2: Stream<Item = Child::Msg> + Send + 'static,
     {
@@ -550,8 +568,6 @@ where
         self.ctx.total_children += 1;
         let id = self.ctx.total_children;
 
-        let (todo_tx, _todo_rx) = flume::unbounded();
-
         let ctx: Ctx<Child> = Ctx {
             id,
             props: self.props,
@@ -563,11 +579,10 @@ where
             total_children: 0,
             supervision: self.supervision,
             restarts: 0,
-            err_sender: Some(todo_tx),
             tasks: JoinSet::new(),
         };
 
-        spawn::<Child, S>(ctx, None, self.stream);
+        spawn::<Child, S, W>(ctx, None, self.stream, self.watch);
 
         self.ctx
             .children_proc_msg_tx
@@ -641,7 +656,6 @@ impl Node {
             total_children: 0,
             supervision: Supervision::Stop,
             restarts: 0,
-            err_sender: None,
             tasks: JoinSet::new(),
         };
 
