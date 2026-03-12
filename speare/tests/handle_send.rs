@@ -43,7 +43,6 @@ impl Actor for Bar {
     }
 }
 
-#[allow(clippy::disallowed_names)]
 #[tokio::test]
 async fn sends_msgs_in_correct_order() {
     // Arrange

@@ -354,7 +354,6 @@ enum ProcMsg {
     /// Sent from child once it terminates
     ChildTerminated {
         child_id: u64,
-        ack: Sender<()>,
     },
     FromParent(ProcAction),
     FromHandle(ProcAction),
@@ -413,12 +412,10 @@ where
                                 break;
                             }
 
-                            Ok(ProcMsg::ChildTerminated { child_id, ack }) => {
+                            Ok(ProcMsg::ChildTerminated { child_id, }) => {
                                 if ctx.children_proc_msg_tx.remove(&child_id).is_some() {
                                     ctx.total_children -= 1;
                                 }
-
-                                let _ = ack.send(());
                             }
 
                             Ok(_) => ()
@@ -449,18 +446,18 @@ where
 
         ctx.stop_children().await;
         let exit_reason = exit_reason.unwrap_or(ExitReason::Handle);
+
+        if let ExitReason::Err(_) = &exit_reason {
+            ctx.restarts += 1;
+        }
+
         Child::exit(actor_created, exit_reason, &mut ctx).await;
         let _ = stop_ack_tx.map(|tx| tx.send(()));
 
         if let Restart::In(duration) = restart {
             spawn::<Child>(ctx, Some(duration))
         } else if let Some(parent_tx) = ctx.parent_proc_msg_tx {
-            let (tx, rx) = flume::unbounded();
-            let _ = parent_tx.send(ProcMsg::ChildTerminated {
-                child_id: ctx.id,
-                ack: tx,
-            });
-            let _ = rx.recv_async().await;
+            let _ = parent_tx.send(ProcMsg::ChildTerminated { child_id: ctx.id });
         }
     });
 }
@@ -482,7 +479,7 @@ where
 pub enum Supervision {
     Stop,
     Resume,
-    Restart { max: Lmt, backoff: Backoff },
+    Restart { max: Limit, backoff: Backoff },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -497,25 +494,25 @@ pub enum Backoff {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Lmt {
+pub enum Limit {
     None,
     Amount(u64),
 }
 
-impl From<u64> for Lmt {
+impl From<u64> for Limit {
     fn from(value: u64) -> Self {
         match value {
-            0 => Lmt::None,
-            v => Lmt::Amount(v),
+            0 => Limit::None,
+            v => Limit::Amount(v),
         }
     }
 }
 
-impl PartialEq<u64> for Lmt {
+impl PartialEq<u64> for Limit {
     fn eq(&self, other: &u64) -> bool {
         match self {
-            Lmt::None => false,
-            Lmt::Amount(n) => n == other,
+            Limit::None => false,
+            Limit::Amount(n) => n == other,
         }
     }
 }
@@ -602,7 +599,7 @@ impl Restart {
         match supervision {
             Supervision::Stop => Restart::No,
             Supervision::Resume => Restart::No,
-            Supervision::Restart { max, .. } if max == current_restarts => Restart::No,
+            Supervision::Restart { max, .. } if max == current_restarts + 1 => Restart::No,
             Supervision::Restart { backoff, .. } => {
                 let wait = match backoff {
                     Backoff::None => Duration::ZERO,
@@ -672,5 +669,22 @@ impl Node {
 impl Default for Node {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        let mut acks = Vec::with_capacity(self.ctx.total_children as usize);
+        for child in self.ctx.children_proc_msg_tx.values() {
+            let (ack_tx, ack_rx) = flume::unbounded();
+            let _ = child.send(ProcMsg::FromParent(ProcAction::Stop(ack_tx)));
+            acks.push(ack_rx);
+        }
+
+        task::spawn(async {
+            for ack in acks {
+                let _ = ack.recv_async().await;
+            }
+        });
     }
 }

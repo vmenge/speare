@@ -93,7 +93,6 @@ impl Actor for Child2 {
     }
 }
 
-#[allow(clippy::disallowed_names)]
 #[tokio::test]
 async fn on_init_and_on_exit_are_called_in_order() {
     // Arrange
@@ -118,9 +117,8 @@ async fn on_init_and_on_exit_are_called_in_order() {
             TestMsg::BarStarted,
             TestMsg::Child1Started,
             TestMsg::Child2Started,
-            TestMsg::Child2Quit,
-            // Foo quits early as it doesnt have any children
             TestMsg::FooQuit,
+            TestMsg::Child2Quit,
             TestMsg::Child1Quit,
             TestMsg::BarQuit,
         ],
@@ -128,7 +126,6 @@ async fn on_init_and_on_exit_are_called_in_order() {
     )
 }
 
-#[allow(clippy::disallowed_names)]
 #[tokio::test]
 async fn order_preserved_even_with_startup_failure() {
     // Arrange
@@ -142,8 +139,6 @@ async fn order_preserved_even_with_startup_failure() {
     // Act
     drop(node);
     task::yield_now().await;
-    task::yield_now().await;
-    task::yield_now().await;
 
     // Assert
     assert_eq!(
@@ -153,9 +148,9 @@ async fn order_preserved_even_with_startup_failure() {
             TestMsg::Child1Started,
             TestMsg::Child2Started,
             TestMsg::Child2Quit,
-            TestMsg::FooQuit,
             TestMsg::Child1Quit,
             TestMsg::BarQuit,
+            TestMsg::FooQuit,
         ],
         recvd.clone_vec().await
     )

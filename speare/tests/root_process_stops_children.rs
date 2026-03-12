@@ -1,4 +1,4 @@
-use speare::{req_res, Actor, Ctx, Handle, Node, Request, Supervision};
+use speare::{req_res, Actor, Ctx, Handle, Node, Request};
 use tokio::task;
 
 struct Foo;
@@ -35,7 +35,6 @@ async fn node_stops_all_actors_when_dropped() {
 
     // Act
     drop(node);
-    task::yield_now().await;
     task::yield_now().await;
 
     // Assert
@@ -75,7 +74,6 @@ async fn root_supervision_works() {
     // Act
     quitter.send(());
     task::yield_now().await;
-    task::yield_now().await;
 
     // Assert
     assert!(!quitter.is_alive());
@@ -84,7 +82,6 @@ async fn root_supervision_works() {
     // Act
     let quit_on_start = true;
     let quitter2 = node.actor::<Quitter>(quit_on_start).spawn();
-    task::yield_now().await;
     task::yield_now().await;
 
     // Assert
@@ -131,7 +128,6 @@ async fn stopping_a_root_actor_stops_all_its_children() {
 
     // Act
     parent.stop();
-    task::yield_now().await;
     task::yield_now().await;
 
     // Assert
