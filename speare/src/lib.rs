@@ -1,6 +1,14 @@
 use flume::{Receiver, Sender};
 use futures_core::Stream;
-use std::{cmp, collections::HashMap, future::Future, marker::PhantomData, time::Duration};
+use std::any::Any;
+use std::{
+    cmp,
+    collections::HashMap,
+    future::Future,
+    marker::PhantomData,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use tokio::{
     task::{self, JoinSet},
     time::{self, Interval},
@@ -230,6 +238,8 @@ where
     total_children: u64,
     tasks: JoinSet<Result<P::Msg, P::Err>>,
     restarts: u64,
+    registry_key: Option<String>,
+    registry: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
 }
 
 impl<P> Ctx<P>
@@ -280,6 +290,38 @@ where
         F: Future<Output = Result<P::Msg, P::Err>> + Send + 'static,
     {
         self.tasks.spawn(f);
+    }
+
+    pub fn get_handle_for<A: Actor>(&self) -> Option<Handle<A::Msg>> {
+        let key = std::any::type_name::<A>();
+        let reg = self.registry.read().unwrap();
+        reg.get(key)
+            .and_then(|h| h.downcast_ref::<Handle<A::Msg>>())
+            .cloned()
+    }
+
+    pub fn get_handle<Msg: Send + 'static>(&self, name: &str) -> Option<Handle<Msg>> {
+        let reg = self.registry.read().unwrap();
+        reg.get(name)
+            .and_then(|h| h.downcast_ref::<Handle<Msg>>())
+            .cloned()
+    }
+
+    pub fn send<A: Actor>(&self, msg: impl Into<A::Msg>) -> Result<(), RegistryError> {
+        let key = std::any::type_name::<A>();
+        let reg = self.registry.read().map_err(|_| RegistryError::PoisonErr)?;
+        match reg.get(key).and_then(|h| h.downcast_ref::<Handle<A::Msg>>()) {
+            Some(handle) => { handle.send(msg); Ok(()) }
+            None => Err(RegistryError::NotFound(key.to_string())),
+        }
+    }
+
+    pub fn send_to<Msg: Send + 'static>(&self, name: &str, msg: impl Into<Msg>) -> Result<(), RegistryError> {
+        let reg = self.registry.read().map_err(|_| RegistryError::PoisonErr)?;
+        match reg.get(name).and_then(|h| h.downcast_ref::<Handle<Msg>>()) {
+            Some(handle) => { handle.send(msg); Ok(()) }
+            None => Err(RegistryError::NotFound(name.to_string())),
+        }
     }
 }
 
@@ -427,6 +469,12 @@ where
         if let Restart::In(duration) = restart {
             spawn::<Child, S, W>(ctx, Some(duration), stream, watch)
         } else if let Some(parent_tx) = ctx.parent_proc_msg_tx {
+            if let Some(key) = ctx.registry_key.take() {
+                if let Ok(mut reg) = ctx.registry.write() {
+                    reg.remove(&key);
+                }
+            }
+
             let _ = parent_tx.send(ProcMsg::ChildTerminated { child_id: ctx.id });
         }
     });
@@ -474,6 +522,25 @@ impl PartialEq<u64> for Limit {
     }
 }
 
+#[derive(Debug)]
+pub enum RegistryError {
+    NameTaken(String),
+    NotFound(String),
+    PoisonErr,
+}
+
+impl std::fmt::Display for RegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegistryError::NameTaken(name) => write!(f, "registry name already taken: {name}"),
+            RegistryError::NotFound(name) => write!(f, "no actor registered under: {name}"),
+            RegistryError::PoisonErr => write!(f, "registry lock poisoned"),
+        }
+    }
+}
+
+impl std::error::Error for RegistryError {}
+
 pub struct SpawnBuilder<'a, Parent, Child, S = NoStream<<Child as Actor>::Msg>, W = NoWatch>
 where
     Parent: Actor,
@@ -485,6 +552,7 @@ where
     /// Only kicks in if child is stopped or reaches maximum number of restarts.
     watch: W,
     stream: S,
+    registry_key: Option<String>,
 }
 
 impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child, NoStream<Child::Msg>, NoWatch>
@@ -499,6 +567,7 @@ where
             supervision: Supervision::Stop,
             stream: NoStream(PhantomData),
             watch: NoWatch,
+            registry_key: None,
         }
     }
 }
@@ -537,6 +606,7 @@ where
             supervision: self.supervision,
             watch: WatchFn { f, parent_msg_tx },
             stream: self.stream,
+            registry_key: self.registry_key,
         }
     }
 
@@ -553,6 +623,7 @@ where
                 a: self.stream,
                 b: stream,
             },
+            registry_key: self.registry_key,
         }
     }
 
@@ -580,6 +651,8 @@ where
             supervision: self.supervision,
             restarts: 0,
             tasks: JoinSet::new(),
+            registry_key: self.registry_key,
+            registry: self.ctx.registry.clone(),
         };
 
         spawn::<Child, S, W>(ctx, None, self.stream, self.watch);
@@ -589,6 +662,27 @@ where
             .insert(self.ctx.total_children, handle.proc_msg_tx.clone());
 
         handle
+    }
+
+    pub fn spawn_registered(self) -> Result<Handle<Child::Msg>, RegistryError> {
+        let key = std::any::type_name::<Child>();
+        self.spawn_named(key)
+    }
+
+    pub fn spawn_named(mut self, name: impl Into<String>) -> Result<Handle<Child::Msg>, RegistryError> {
+        let name = name.into();
+        let registry = self.ctx.registry.clone();
+        let mut reg = registry.write().map_err(|_| RegistryError::PoisonErr)?;
+
+        if reg.contains_key(&name) {
+            return Err(RegistryError::NameTaken(name.clone()));
+        }
+
+        self.registry_key = Some(name.clone());
+        let handle = self.spawn();
+        reg.insert(name, Box::new(handle.clone()));
+
+        Ok(handle)
     }
 }
 
@@ -657,6 +751,8 @@ impl Node {
             supervision: Supervision::Stop,
             restarts: 0,
             tasks: JoinSet::new(),
+            registry_key: None,
+            registry: Default::default(),
         };
 
         Self { ctx }
