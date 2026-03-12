@@ -1,11 +1,9 @@
 use flume::{Receiver, Sender};
 use futures_core::Stream;
-use std::{
-    any::Any, cmp, collections::HashMap, future::Future, marker::PhantomData, time::Duration,
-};
+use std::{cmp, collections::HashMap, future::Future, marker::PhantomData, time::Duration};
 use tokio::{
     task,
-    time::{self},
+    time::{self, Interval},
 };
 
 mod exit;
@@ -15,7 +13,7 @@ mod streams;
 pub use exit::*;
 pub use req_res::*;
 
-use crate::streams::{Merge, NoStream};
+use crate::streams::{IntervalStream, Merge, NoStream};
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
 /// with a supervision tree to handle failures.
@@ -122,6 +120,12 @@ impl<Msg> Handle<Msg> {
         let _ = self
             .proc_msg_tx
             .send(ProcMsg::FromHandle(ProcAction::Stop(tx)));
+    }
+
+    pub fn restart(&self) {
+        let _ = self
+            .proc_msg_tx
+            .send(ProcMsg::FromHandle(ProcAction::Restart));
     }
 
     /// Returns true if the [`Actor`] is still running, false if it has been stopped.
@@ -404,7 +408,6 @@ where
     ctx: &'a mut Ctx<Parent>,
     props: Child::Props,
     supervision: Supervision,
-    intervals: Option<Vec<(&'static str, Duration)>>,
     /// Only kicks in if child is stopped or reaches maximum number of restarts.
     watch: bool,
     stream: S,
@@ -463,7 +466,6 @@ where
             props,
             supervision: Supervision::Stop,
             stream: NoStream(PhantomData),
-            intervals: None,
             watch: false,
         }
     }
@@ -480,12 +482,15 @@ where
         self
     }
 
-    pub fn interval(mut self, name: &'static str, duration: Duration) -> Self {
-        let mut intervals = self.intervals.take().unwrap_or_default();
-        intervals.push((name, duration));
-        self.intervals = Some(intervals);
-
-        self
+    pub fn interval<F>(
+        self,
+        interval: Interval,
+        f: F,
+    ) -> SpawnBuilder<'a, Parent, Child, Merge<S, IntervalStream<F>>>
+    where
+        F: Fn() -> Child::Msg + Send + Unpin + 'static,
+    {
+        self.stream(IntervalStream { interval, f })
     }
 
     pub fn watch(mut self) -> Self {
@@ -501,7 +506,6 @@ where
             ctx: self.ctx,
             props: self.props,
             supervision: self.supervision,
-            intervals: self.intervals,
             watch: self.watch,
             stream: Merge {
                 a: self.stream,
@@ -604,7 +608,7 @@ impl Node {
         let ctx = Ctx {
             id: 0,
             props: (),
-            handle: handle.clone(),
+            handle,
             msg_rx,
             parent_proc_msg_tx: None,
             proc_msg_rx,
@@ -623,6 +627,11 @@ impl Node {
         Child: Actor,
     {
         SpawnBuilder::new(&mut self.ctx, props)
+    }
+
+    /// Stops all children. (Drop impl is fire and forget)
+    pub async fn shutdown(&mut self) {
+        self.ctx.stop_children().await;
     }
 }
 

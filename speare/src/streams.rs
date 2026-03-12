@@ -38,3 +38,18 @@ impl<T> Stream for NoStream<T> {
         Poll::Pending
     }
 }
+
+pub struct IntervalStream<F> {
+    pub interval: tokio::time::Interval,
+    pub f: F,
+}
+
+impl<F, M> Stream for IntervalStream<F>
+where
+    F: Fn() -> M + Unpin,
+{
+    type Item = M;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<M>> {
+        self.interval.poll_tick(cx).map(|_| Some((self.f)()))
+    }
+}
