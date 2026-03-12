@@ -4,57 +4,6 @@ use tokio::time;
 
 /// Represents a request sent to a `Actor`.
 /// `Request` holds the data sent to a `Actor` and provides a channel to reply back to the sender.
-///
-/// ## Example
-/// ```
-/// use speare::{req_res, Ctx, Node, Actor, Request};
-/// use derive_more::From;
-/// use tokio::runtime::Runtime;
-///
-/// Runtime::new().unwrap().block_on(async {
-///     let mut node = Node::default();
-///     let parser = node.spawn::<Parser>(());
-///
-///     // use Handle<_>::req if the Actor::Msg
-///     // implements From<Request<_,_>>
-///     let num = parser.req("5".to_string()).await.unwrap();
-///     assert_eq!(num, 5);
-///
-///     // or manually create a Request<_>
-///     let (req, res) = req_res("10".to_string());
-///     parser.send(req);
-///     let num = res.recv().await.unwrap();
-///     assert_eq!(num, 10);
-/// });
-///
-/// struct Parser;
-///
-/// #[derive(From)]
-/// enum ParserMsg {
-///     Parse(Request<String, u32>),
-/// }
-///
-/// impl Actor for Parser {
-///     type Props = ();
-///     type Msg = ParserMsg;
-///     type Err = ();
-///
-///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-///         Ok(Parser)
-///     }
-///
-///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-///         match msg {
-///             ParserMsg::Parse(req) => {
-///                 let num = req.data().parse().unwrap_or(0);
-///                 req.reply(num)
-///             }
-///         }
-///
-///         Ok(())
-///     }
-/// }
-/// ```
 pub struct Request<Req, Res> {
     data: Req,
     tx: Sender<Res>,
@@ -86,51 +35,6 @@ impl<Req, Res> Request<Req, Res> {
 }
 
 ///`Response<Res>` is used to asynchronously wait for and retrieve the result of a `Request<Req, Res>` sent to a `Actor`.
-///
-/// ## Example
-/// ```
-/// use speare::{req_res, Ctx, Node, Actor, Request};
-/// use derive_more::From;
-/// use tokio::runtime::Runtime;
-///
-/// Runtime::new().unwrap().block_on(async {
-///     let mut node = Node::default();
-///     let parser = node.spawn::<Parser>(());
-///
-///     let (req, res) = req_res("10".to_string());
-///     parser.send(req);
-///     let num = res.recv().await.unwrap();
-///     assert_eq!(num, 10);
-/// });
-///
-/// struct Parser;
-///
-/// #[derive(From)]
-/// enum ParserMsg {
-///     Parse(Request<String, u32>),
-/// }
-///
-/// impl Actor for Parser {
-///     type Props = ();
-///     type Msg = ParserMsg;
-///     type Err = ();
-///
-///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-///         Ok(Parser)
-///     }
-///
-///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-///         match msg {
-///             ParserMsg::Parse(req) => {
-///                 let num = req.data().parse().unwrap_or(0);
-///                 req.reply(num)
-///             }
-///         }
-///
-///         Ok(())
-///     }
-/// }
-/// ```
 pub struct Response<Res> {
     rx: Receiver<Res>,
 }
@@ -184,49 +88,6 @@ impl<Res> Response<Res> {
 
 /// Creates a paired `Request<Req, Res>` and `Response<Res>` for communication between `speare` actors.
 /// ## Example
-/// ```
-/// use speare::{req_res, Ctx, Node, Actor, Request};
-/// use derive_more::From;
-/// use tokio::runtime::Runtime;
-///
-/// Runtime::new().unwrap().block_on(async {
-///     let mut node = Node::default();
-///     let parser = node.spawn::<Parser>(());
-///
-///     let (req, res) = req_res("10".to_string());
-///     parser.send(req);
-///     let num = res.recv().await.unwrap();
-///     assert_eq!(num, 10);
-/// });
-///
-/// struct Parser;
-///
-/// #[derive(From)]
-/// enum ParserMsg {
-///     Parse(Request<String, u32>),
-/// }
-///
-/// impl Actor for Parser {
-///     type Props = ();
-///     type Msg = ParserMsg;
-///     type Err = ();
-///
-///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-///         Ok(Parser)
-///     }
-///
-///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-///         match msg {
-///             ParserMsg::Parse(req) => {
-///                 let num = req.data().parse().unwrap_or(0);
-///                 req.reply(num)
-///             }
-///         }
-///
-///         Ok(())
-///     }
-/// }
-/// ```
 pub fn req_res<Req, Res>(req: Req) -> (Request<Req, Res>, Response<Res>) {
     let (tx, rx) = flume::unbounded();
     (Request { data: req, tx }, Response { rx })

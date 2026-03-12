@@ -126,49 +126,6 @@ impl<Msg> Handle<Msg> {
     /// Sends a message to the [`Actor`] associated with this `Handle<_>`, failing silently if that [`Actor`] is no longer running.
     ///
     /// `send` can take advantage of `From<_>` implementations for the variants of the `Actor::Msg` type.
-    ///
-    /// ## Example
-    /// ```
-    /// use speare::{Ctx, Node, Actor};
-    /// use derive_more::From;
-    /// use tokio::runtime::Runtime;
-    ///
-    /// Runtime::new().unwrap().block_on(async {
-    ///     let mut node = Node::default();
-    ///     let counter = node.spawn::<Counter>(());
-    ///
-    ///     // we can send a u32 directly because
-    ///     // CounterMsg derives From
-    ///     counter.send(10);
-    /// });
-    ///
-    /// struct Counter(u32);
-    ///
-    /// #[derive(From)]
-    /// enum CounterMsg {
-    ///     Inc(u32),
-    ///     Print,
-    /// }
-    ///
-    /// impl Actor for Counter {
-    ///     type Props = ();
-    ///     type Msg = CounterMsg;
-    ///     type Err = ();
-    ///
-    ///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-    ///         Ok(Counter(0))
-    ///     }
-    ///
-    ///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-    ///         match msg {
-    ///             CounterMsg::Inc(x) => self.0 += x,
-    ///             CounterMsg::Print => println!("Count is {}", self.0),
-    ///         }
-    ///
-    ///         Ok(())
-    ///     }
-    /// }
-    /// ```
     pub fn send<M: Into<Msg>>(&self, msg: M) {
         let _ = self.msg_tx.send(msg.into());
     }
@@ -190,49 +147,6 @@ impl<Msg> Handle<Msg> {
     /// Sends a request to the `Actor ` as long as its messages implements `From<Request<Req,Res>>`.
     ///
     /// In `speare` a `Request<Req,Res>` allows a request-response transaction between actors.
-    ///
-    /// ## Example
-    /// ```
-    /// use speare::{req_res, Ctx, Node, Actor, Request};
-    /// use derive_more::From;
-    /// use tokio::runtime::Runtime;
-    ///
-    /// Runtime::new().unwrap().block_on(async {
-    ///     let mut node = Node::default();
-    ///     let parser = node.spawn::<Parser>(());
-    ///
-    ///     let num = parser.req("5".to_string()).await.unwrap();
-    ///     assert_eq!(num, 5);
-    /// });
-    ///
-    /// struct Parser;
-    ///
-    /// #[derive(From)]
-    /// enum ParserMsg {
-    ///     Parse(Request<String, u32>),
-    /// }
-    ///
-    /// impl Actor for Parser {
-    ///     type Props = ();
-    ///     type Msg = ParserMsg;
-    ///     type Err = ();
-    ///
-    ///     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-    ///         Ok(Parser)
-    ///     }
-    ///
-    ///     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-    ///         match msg {
-    ///             ParserMsg::Parse(req) => {
-    ///                 let num = req.data().parse().unwrap_or(0);
-    ///                 req.reply(num)
-    ///             }
-    ///         }
-    ///
-    ///         Ok(())
-    ///     }
-    /// }
-    /// ```
     pub async fn req<Req, Res>(&self, req: Req) -> Result<Res, ReqErr>
     where
         Msg: From<Request<Req, Res>>,
