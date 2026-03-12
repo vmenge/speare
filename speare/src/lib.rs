@@ -2,7 +2,7 @@ use flume::{Receiver, Sender};
 use futures_core::Stream;
 use std::{cmp, collections::HashMap, future::Future, marker::PhantomData, time::Duration};
 use tokio::{
-    task,
+    task::{self, JoinSet},
     time::{self, Interval},
 };
 
@@ -224,6 +224,7 @@ where
     children_proc_msg_tx: HashMap<u64, Sender<ProcMsg>>,
     supervision: Supervision,
     total_children: u64,
+    tasks: JoinSet<Result<P::Msg, P::Err>>,
     err_sender: Option<Sender<P::Err>>,
     restarts: u64,
 }
@@ -270,6 +271,13 @@ where
         self.total_children = 0;
         self.children_proc_msg_tx.clear();
     }
+
+    pub fn task<F>(&mut self, f: F)
+    where
+        F: Future<Output = Result<P::Msg, P::Err>> + Send + 'static,
+    {
+        self.tasks.spawn(f);
+    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -311,75 +319,91 @@ where
                 restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
             }
 
-            Ok(mut actor) => loop {
-                tokio::select! {
-                    biased;
+            Ok(mut actor) => {
+                macro_rules! on_err {
+                    ($e:expr) => {
+                        if let Supervision::Resume = ctx.supervision {
+                            continue;
+                        }
 
-                    proc_msg = ctx.proc_msg_rx.recv_async() => {
-                        match proc_msg {
-                            Err(_) => break,
+                        restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
+                        exit_reason = Some(ExitReason::Err($e));
+                        actor_created = Some(actor);
+                        break;
+                    };
+                }
 
-                            Ok(ProcMsg::FromHandle(ProcAction::Stop(tx)) ) => {
-                                exit_reason = Some(ExitReason::Handle);
-                                stop_ack_tx = Some(tx);
-                                break
-                            },
+                loop {
+                    tokio::select! {
+                        biased;
 
-                            Ok(ProcMsg::FromParent(ProcAction::Stop(tx))) => {
-                                exit_reason = exit_reason.or(Some(ExitReason::Parent));
-                                stop_ack_tx = Some(tx);
-                                break
-                            },
+                        proc_msg = ctx.proc_msg_rx.recv_async() => {
+                            match proc_msg {
+                                Err(_) => break,
 
-                            Ok(ProcMsg::FromParent(ProcAction::Restart)) => {
-                                exit_reason = exit_reason.or(Some(ExitReason::Parent));
-                                restart = Restart::In(Duration::ZERO);
-                                break;
+                                Ok(ProcMsg::FromHandle(ProcAction::Stop(tx)) ) => {
+                                    exit_reason = Some(ExitReason::Handle);
+                                    stop_ack_tx = Some(tx);
+                                    break
+                                },
+
+                                Ok(ProcMsg::FromParent(ProcAction::Stop(tx))) => {
+                                    exit_reason = exit_reason.or(Some(ExitReason::Parent));
+                                    stop_ack_tx = Some(tx);
+                                    break
+                                },
+
+                                Ok(ProcMsg::FromParent(ProcAction::Restart)) => {
+                                    exit_reason = exit_reason.or(Some(ExitReason::Parent));
+                                    restart = Restart::In(Duration::ZERO);
+                                    break;
+                                }
+
+                                Ok(ProcMsg::ChildTerminated { child_id, }) => {
+                                    if ctx.children_proc_msg_tx.remove(&child_id).is_some() {
+                                        ctx.total_children -= 1;
+                                    }
+                                }
+
+                                Ok(_) => ()
                             }
+                        }
 
-                            Ok(ProcMsg::ChildTerminated { child_id, }) => {
-                                if ctx.children_proc_msg_tx.remove(&child_id).is_some() {
-                                    ctx.total_children -= 1;
+                        Some(Ok(msg)) = ctx.tasks.join_next() => {
+                            match msg {
+                                Err(e) => {
+                                    on_err!(e);
+                                }
+
+                                Ok(msg) => {
+                                    if let Err(e) = actor.handle(msg, &mut ctx).await {
+                                        on_err!(e);
+                                    };
                                 }
                             }
 
-                            Ok(_) => ()
                         }
-                    }
 
-                    Some(msg) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)) => {
-                        if let Err(e) = actor.handle(msg, &mut ctx).await {
-                            if let Supervision::Resume = ctx.supervision {
-                                continue;
-                            }
+                        Some(msg) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)) => {
+                            if let Err(e) = actor.handle(msg, &mut ctx).await {
+                                on_err!(e);
+                            };
+                        }
 
-                            restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
-                            exit_reason = Some(ExitReason::Err(e));
-                            actor_created = Some(actor);
-                            break;
-                        };
-                    }
+                        recvd = ctx.msg_rx.recv_async() => {
+                            match recvd {
+                                Err(_) => break,
 
-                    recvd = ctx.msg_rx.recv_async() => {
-                        match recvd {
-                            Err(_) => break,
-
-                            Ok(msg) => {
-                                if let Err(e) = actor.handle(msg, &mut ctx).await {
-                                    if let Supervision::Resume = ctx.supervision {
-                                        continue;
-                                    }
-
-                                    restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
-                                    exit_reason = Some(ExitReason::Err(e));
-                                    actor_created = Some(actor);
-                                    break;
-                                };
+                                Ok(msg) => {
+                                    if let Err(e) = actor.handle(msg, &mut ctx).await {
+                                        on_err!(e);
+                                    };
+                                }
                             }
                         }
                     }
                 }
-            },
+            }
         }
 
         ctx.stop_children().await;
@@ -540,6 +564,7 @@ where
             supervision: self.supervision,
             restarts: 0,
             err_sender: Some(todo_tx),
+            tasks: JoinSet::new(),
         };
 
         spawn::<Child, S>(ctx, None, self.stream);
@@ -617,6 +642,7 @@ impl Node {
             supervision: Supervision::Stop,
             restarts: 0,
             err_sender: None,
+            tasks: JoinSet::new(),
         };
 
         Self { ctx }
