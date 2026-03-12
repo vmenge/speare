@@ -1,5 +1,8 @@
 use flume::{Receiver, Sender};
-use std::{any::Any, cmp, collections::HashMap, future::Future, time::Duration};
+use futures_core::Stream;
+use std::{
+    any::Any, cmp, collections::HashMap, future::Future, marker::PhantomData, time::Duration,
+};
 use tokio::{
     task,
     time::{self},
@@ -7,9 +10,12 @@ use tokio::{
 
 mod exit;
 mod req_res;
+mod streams;
 
 pub use exit::*;
 pub use req_res::*;
+
+use crate::streams::{Merge, NoStream};
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
 /// with a supervision tree to handle failures.
@@ -279,9 +285,10 @@ enum ProcAction {
     Stop(Sender<()>),
 }
 
-fn spawn<Child>(mut ctx: Ctx<Child>, delay: Option<Duration>)
+fn spawn<Child, S>(mut ctx: Ctx<Child>, delay: Option<Duration>, mut stream: S)
 where
     Child: Actor,
+    S: Stream<Item = Child::Msg> + Send + Unpin + 'static,
 {
     tokio::spawn(async move {
         if let Some(d) = delay.filter(|d| !d.is_zero()) {
@@ -336,6 +343,19 @@ where
                         }
                     }
 
+                    Some(msg) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)) => {
+                        if let Err(e) = actor.handle(msg, &mut ctx).await {
+                            if let Supervision::Resume = ctx.supervision {
+                                continue;
+                            }
+
+                            restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
+                            exit_reason = Some(ExitReason::Err(e));
+                            actor_created = Some(actor);
+                            break;
+                        };
+                    }
+
                     recvd = ctx.msg_rx.recv_async() => {
                         match recvd {
                             Err(_) => break,
@@ -369,14 +389,14 @@ where
         let _ = stop_ack_tx.map(|tx| tx.send(()));
 
         if let Restart::In(duration) = restart {
-            spawn::<Child>(ctx, Some(duration))
+            spawn::<Child, S>(ctx, Some(duration), stream)
         } else if let Some(parent_tx) = ctx.parent_proc_msg_tx {
             let _ = parent_tx.send(ProcMsg::ChildTerminated { child_id: ctx.id });
         }
     });
 }
 
-pub struct SpawnBuilder<'a, Parent, Child>
+pub struct SpawnBuilder<'a, Parent, Child, S = NoStream<<Child as Actor>::Msg>>
 where
     Parent: Actor,
     Child: Actor,
@@ -387,6 +407,7 @@ where
     intervals: Option<Vec<(&'static str, Duration)>>,
     /// Only kicks in if child is stopped or reaches maximum number of restarts.
     watch: bool,
+    stream: S,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -431,7 +452,7 @@ impl PartialEq<u64> for Limit {
     }
 }
 
-impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child>
+impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child, NoStream<Child::Msg>>
 where
     Parent: Actor,
     Child: Actor,
@@ -441,11 +462,19 @@ where
             ctx,
             props,
             supervision: Supervision::Stop,
+            stream: NoStream(PhantomData),
             intervals: None,
             watch: false,
         }
     }
+}
 
+impl<'a, Parent, Child, S> SpawnBuilder<'a, Parent, Child, S>
+where
+    Parent: Actor,
+    Child: Actor,
+    S: Stream<Item = Child::Msg> + Send + Unpin + 'static,
+{
     pub fn supervision(mut self, supervision: Supervision) -> Self {
         self.supervision = supervision;
         self
@@ -462,6 +491,23 @@ where
     pub fn watch(mut self) -> Self {
         self.watch = true;
         self
+    }
+
+    pub fn stream<S2>(self, stream: S2) -> SpawnBuilder<'a, Parent, Child, Merge<S, S2>>
+    where
+        S2: Stream<Item = Child::Msg> + Send + 'static,
+    {
+        SpawnBuilder {
+            ctx: self.ctx,
+            props: self.props,
+            supervision: self.supervision,
+            intervals: self.intervals,
+            watch: self.watch,
+            stream: Merge {
+                a: self.stream,
+                b: stream,
+            },
+        }
     }
 
     pub fn spawn(self) -> Handle<Child::Msg> {
@@ -492,7 +538,7 @@ where
             err_sender: Some(todo_tx),
         };
 
-        spawn::<Child>(ctx, None);
+        spawn::<Child, S>(ctx, None, self.stream);
 
         self.ctx
             .children_proc_msg_tx
