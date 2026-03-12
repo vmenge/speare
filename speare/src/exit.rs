@@ -64,7 +64,7 @@ where
     /// [`Actor`] exited due to a request from its Parent [`Actor`] as a part of its supervision strategy.
     Parent,
     /// [`Actor`] exited due to error.
-    Err(SharedErr<P::Err>),
+    Err(P::Err),
 }
 
 impl<P> fmt::Debug for ExitReason<P>

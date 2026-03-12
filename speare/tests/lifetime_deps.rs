@@ -1,5 +1,5 @@
 mod sync_vec;
-use speare::{Actor, Ctx, Directive, ExitReason, Node, Supervision};
+use speare::{Actor, Ctx, ExitReason, Node};
 use sync_vec::SyncVec;
 use tokio::task;
 
@@ -44,7 +44,7 @@ impl Actor for Bar {
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
         ctx.props().0.push(TestMsg::BarStarted).await;
-        ctx.spawn::<Child1>(ctx.props().0.clone());
+        ctx.actor::<Child1>(ctx.props().0.clone()).spawn();
 
         if ctx.props().1 {
             Err(())
@@ -67,7 +67,7 @@ impl Actor for Child1 {
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
         ctx.props().push(TestMsg::Child1Started).await;
-        ctx.spawn::<Child2>(ctx.props().clone());
+        ctx.actor::<Child2>(ctx.props().clone()).spawn();
         Ok(Child1)
     }
 
@@ -99,9 +99,9 @@ async fn on_init_and_on_exit_are_called_in_order() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<_> = Default::default();
-    node.spawn::<Foo>(recvd.clone());
+    node.actor::<Foo>(recvd.clone()).spawn();
     let fail_to_start = false;
-    node.spawn::<Bar>((recvd.clone(), fail_to_start));
+    node.actor::<Bar>((recvd.clone(), fail_to_start)).spawn();
     task::yield_now().await;
 
     // Act
@@ -132,11 +132,11 @@ async fn on_init_and_on_exit_are_called_in_order() {
 #[tokio::test]
 async fn order_preserved_even_with_startup_failure() {
     // Arrange
-    let mut node = Node::with_supervision(Supervision::one_for_one().directive(Directive::Stop));
+    let mut node = Node::default();
     let recvd: SyncVec<_> = Default::default();
-    node.spawn::<Foo>(recvd.clone());
+    node.actor::<Foo>(recvd.clone()).spawn();
     let fail_to_start = true;
-    node.spawn::<Bar>((recvd.clone(), fail_to_start));
+    node.actor::<Bar>((recvd.clone(), fail_to_start)).spawn();
     task::yield_now().await;
 
     // Act

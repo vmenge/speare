@@ -1,4 +1,4 @@
-use speare::{req_res, Actor, Ctx, Directive, Handle, Node, Request, Supervision};
+use speare::{req_res, Actor, Ctx, Handle, Node, Request, Supervision};
 use tokio::task;
 
 struct Foo;
@@ -30,8 +30,8 @@ impl Actor for Bar {
 async fn node_stops_all_actors_when_dropped() {
     // Arrange
     let mut node = Node::default();
-    let foo = node.spawn::<Foo>(());
-    let bar = node.spawn::<Bar>(());
+    let foo = node.actor::<Foo>(()).spawn();
+    let bar = node.actor::<Bar>(()).spawn();
 
     // Act
     drop(node);
@@ -66,9 +66,9 @@ impl Actor for Quitter {
 #[tokio::test]
 async fn root_supervision_works() {
     // Arrange
-    let mut node = Node::with_supervision(Supervision::one_for_one().directive(Directive::Stop));
+    let mut node = Node::default();
     let quit_on_start = false;
-    let quitter = node.spawn::<Quitter>(quit_on_start);
+    let quitter = node.actor::<Quitter>(quit_on_start).spawn();
     assert!(quitter.is_alive());
 
     // Error on handle
@@ -83,7 +83,7 @@ async fn root_supervision_works() {
     // Error on init
     // Act
     let quit_on_start = true;
-    let quitter2 = node.spawn::<Quitter>(quit_on_start);
+    let quitter2 = node.actor::<Quitter>(quit_on_start).spawn();
     task::yield_now().await;
     task::yield_now().await;
 
@@ -103,8 +103,8 @@ impl Actor for Parent {
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
         Ok(Parent {
-            foo: ctx.spawn::<Foo>(()),
-            bar: ctx.spawn::<Bar>(()),
+            foo: ctx.actor::<Foo>(()).spawn(),
+            bar: ctx.actor::<Bar>(()).spawn(),
         })
     }
 
@@ -120,7 +120,7 @@ impl Actor for Parent {
 async fn stopping_a_root_actor_stops_all_its_children() {
     // Arrange
     let mut node = Node::default();
-    let parent = node.spawn::<Parent>(());
+    let parent = node.actor::<Parent>(()).spawn();
 
     let (req, res) = req_res(());
     parent.send(req);

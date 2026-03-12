@@ -1,5 +1,5 @@
 use derive_more::From;
-use speare::{req_res, Actor, Ctx, Directive, ExitReason, Handle, Node, Request, Supervision};
+use speare::{req_res, Actor, Ctx, ExitReason, Handle, Node, Request, Supervision};
 use std::time::Duration;
 use tokio::{task, time};
 mod sync_vec;
@@ -55,7 +55,7 @@ mod one_for_one {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             Ok(MaxResetAmount {
-                child: ctx.spawn::<Child>(0),
+                child: ctx.actor::<Child>(0).spawn(),
             })
         }
 
@@ -63,17 +63,13 @@ mod one_for_one {
             req.reply(self.child.clone());
             Ok(())
         }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_one().max_restarts(2)
-        }
     }
 
     #[tokio::test]
     async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
         let mut node = Node::default();
-        let max_reset = node.spawn::<MaxResetAmount>(());
+        let max_reset = node.actor::<MaxResetAmount>(()).spawn();
 
         let (req, res) = req_res(());
         max_reset.send(req);
@@ -104,8 +100,8 @@ mod one_for_one {
     #[tokio::test]
     async fn using_node_as_parent_reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
-        let mut node = Node::with_supervision(Supervision::one_for_one().max_restarts(2));
-        let child = node.spawn::<Child>(0);
+        let mut node = Node::default();
+        let child = node.actor::<Child>(0).spawn();
 
         let kill = || async {
             child.send(ChildMsg::Fail);
@@ -141,7 +137,7 @@ mod one_for_one {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             Ok(MaxResetWithin {
-                child: ctx.spawn::<Child>(0),
+                child: ctx.actor::<Child>(0).spawn(),
             })
         }
 
@@ -149,17 +145,13 @@ mod one_for_one {
             req.reply(self.child.clone());
             Ok(())
         }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_one().max_restarts((1, Duration::from_secs(1)))
-        }
     }
 
     #[tokio::test]
     async fn shuts_down_actor_only_if_reset_limit_is_reached_within_duration() {
         // Arrange
         let mut node = Node::default();
-        let max_reset = node.spawn::<MaxResetWithin>(());
+        let max_reset = node.actor::<MaxResetWithin>(()).spawn();
 
         let (req, res) = req_res(());
         max_reset.send(req);
@@ -205,9 +197,9 @@ mod one_for_one {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             Ok(Parent {
-                child0: ctx.spawn::<Child>(0),
-                child1: ctx.spawn::<Child>(1),
-                child2: ctx.spawn::<Child>(2),
+                child0: ctx.actor::<Child>(0).spawn(),
+                child1: ctx.actor::<Child>(1).spawn(),
+                child2: ctx.actor::<Child>(2).spawn(),
             })
         }
 
@@ -215,21 +207,13 @@ mod one_for_one {
             req.reply(self.clone());
             Ok(())
         }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_one().when(|e: &u32| match e {
-                0 => Directive::Resume,
-                1 => Directive::Restart,
-                _ => Directive::Stop,
-            })
-        }
     }
 
     #[tokio::test]
     async fn one_for_one_only_affects_failing_actor() {
         // Arrange
         let mut node = Node::default();
-        let root = node.spawn::<Parent>(());
+        let root = node.actor::<Parent>(()).spawn();
 
         let (req, res) = req_res(());
         root.send(req);
@@ -292,7 +276,7 @@ mod one_for_one {
         type Err = ();
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            ctx.spawn::<EscalateParent>(ctx.this().clone());
+            ctx.actor::<EscalateParent>(ctx.this().clone()).spawn();
             Ok(Self { errs: vec![] })
         }
 
@@ -303,18 +287,6 @@ mod one_for_one {
             }
 
             Ok(())
-        }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_one()
-                .when(|e: &EscalateChildErr| {
-                    e.0.send(EscalateRootMsg::Push("EscalateChildErr".to_string()));
-                    Directive::Resume
-                })
-                .when(|e: &EscalateParentErr| {
-                    e.0.send(EscalateRootMsg::Push("EscalateParentErr".to_string()));
-                    Directive::Resume
-                })
         }
     }
 
@@ -329,12 +301,8 @@ mod one_for_one {
         type Err = EscalateParentErr;
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            ctx.spawn::<EscalateChild>(ctx.props().clone());
+            ctx.actor::<EscalateChild>(ctx.props().clone()).spawn();
             Ok(Self)
-        }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_one().directive(Directive::Escalate)
         }
     }
 
@@ -359,7 +327,7 @@ mod one_for_one {
         let mut node = Node::default();
 
         // Act
-        let root = node.spawn::<EscalateRoot>(());
+        let root = node.actor::<EscalateRoot>(()).spawn();
         task::yield_now().await;
         let errors = root.req(()).await.unwrap();
 
@@ -386,8 +354,8 @@ mod one_for_all {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             Ok(MaxResetAmount {
-                child0: ctx.spawn::<Child>(0),
-                child1: ctx.spawn::<Child>(1),
+                child0: ctx.actor::<Child>(0).spawn(),
+                child1: ctx.actor::<Child>(1).spawn(),
             })
         }
 
@@ -395,17 +363,13 @@ mod one_for_all {
             req.reply(self.clone());
             Ok(())
         }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_all().max_restarts(2)
-        }
     }
 
     #[tokio::test]
     async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
         let mut node = Node::default();
-        let max_reset = node.spawn::<MaxResetAmount>(());
+        let max_reset = node.actor::<MaxResetAmount>(()).spawn();
 
         let (req, res) = req_res(());
         max_reset.send(req);
@@ -449,8 +413,8 @@ mod one_for_all {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             Ok(MaxResetWithin {
-                child0: ctx.spawn::<Child>(0),
-                child1: ctx.spawn::<Child>(1),
+                child0: ctx.actor::<Child>(0).spawn(),
+                child1: ctx.actor::<Child>(1).spawn(),
             })
         }
 
@@ -458,17 +422,13 @@ mod one_for_all {
             req.reply(self.clone());
             Ok(())
         }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_all().max_restarts((1, Duration::from_secs(1)))
-        }
     }
 
     #[tokio::test]
     async fn shuts_down_actor_only_if_reset_limit_is_reached_within_duration() {
         // Arrange
         let mut node = Node::default();
-        let max_reset = node.spawn::<MaxResetWithin>(());
+        let max_reset = node.actor::<MaxResetWithin>(()).spawn();
 
         let (req, res) = req_res(());
         max_reset.send(req);
@@ -516,9 +476,9 @@ mod one_for_all {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             Ok(Parent {
-                child0: ctx.spawn::<Child>(0),
-                child1: ctx.spawn::<Child>(1),
-                child2: ctx.spawn::<Child>(2),
+                child0: ctx.actor::<Child>(0).spawn(),
+                child1: ctx.actor::<Child>(1).spawn(),
+                child2: ctx.actor::<Child>(2).spawn(),
             })
         }
 
@@ -526,21 +486,13 @@ mod one_for_all {
             req.reply(self.clone());
             Ok(())
         }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_all().when(|e: &u32| match e {
-                0 => Directive::Resume,
-                1 => Directive::Restart,
-                _ => Directive::Stop,
-            })
-        }
     }
 
     #[tokio::test]
     async fn one_for_all_affects_all_actors() {
         // Arrange
         let mut node = Node::default();
-        let root = node.spawn::<Parent>(());
+        let root = node.actor::<Parent>(()).spawn();
 
         let (req, res) = req_res(());
         root.send(req);
@@ -601,7 +553,7 @@ mod one_for_all {
         type Err = ();
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            ctx.spawn::<EscalateParent>(ctx.this().clone());
+            ctx.actor::<EscalateParent>(ctx.this().clone()).spawn();
             Ok(Self { errs: vec![] })
         }
 
@@ -612,18 +564,6 @@ mod one_for_all {
             }
 
             Ok(())
-        }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_all()
-                .when(|e: &EscalateChildErr| {
-                    e.0.send(EscalateRootMsg::Push("EscalateChildErr".to_string()));
-                    Directive::Resume
-                })
-                .when(|e: &EscalateParentErr| {
-                    e.0.send(EscalateRootMsg::Push("EscalateParentErr".to_string()));
-                    Directive::Resume
-                })
         }
     }
 
@@ -638,12 +578,8 @@ mod one_for_all {
         type Err = EscalateParentErr;
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            ctx.spawn::<EscalateChild>(ctx.props().clone());
+            ctx.actor::<EscalateChild>(ctx.props().clone()).spawn();
             Ok(Self)
-        }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_one().directive(Directive::Escalate)
         }
     }
 
@@ -668,7 +604,7 @@ mod one_for_all {
         let mut node = Node::default();
 
         // Act
-        let root = node.spawn::<EscalateRoot>(());
+        let root = node.actor::<EscalateRoot>(()).spawn();
         task::yield_now().await;
         let errors = root.req(()).await.unwrap();
 
@@ -687,19 +623,15 @@ mod one_for_all {
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
             ctx.props().push("Dad::init".to_string()).await;
-            let kid0 = ctx.spawn::<Kid>((0, ctx.props().clone()));
-            ctx.spawn::<Kid>((1, ctx.props().clone()));
-            ctx.spawn::<Kid>((2, ctx.props().clone()));
+            let kid0 = ctx.actor::<Kid>((0, ctx.props().clone())).spawn();
+            ctx.actor::<Kid>((1, ctx.props().clone())).spawn();
+            ctx.actor::<Kid>((2, ctx.props().clone())).spawn();
 
             Ok(Self { kid0 })
         }
 
         async fn exit(_: Option<Self>, _: ExitReason<Self>, ctx: &mut Ctx<Self>) {
             ctx.props().push("Dad::exit".to_string()).await;
-        }
-
-        fn supervision(_: &Self::Props) -> Supervision {
-            Supervision::one_for_all().directive(Directive::Restart)
         }
 
         async fn handle(&mut self, _: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
@@ -736,7 +668,7 @@ mod one_for_all {
         // Arrange
         let evts = SyncVec::default();
         let mut node = Node::default();
-        let dad = node.spawn::<Dad>(evts.clone());
+        let dad = node.actor::<Dad>(evts.clone()).spawn();
 
         // Act
         dad.send(());
