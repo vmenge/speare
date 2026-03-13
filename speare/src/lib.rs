@@ -834,7 +834,10 @@ where
         Self {
             ctx,
             props,
-            supervision: Supervision::Stop,
+            supervision: Supervision::Restart {
+                max: Limit::None,
+                backoff: Backoff::None,
+            },
             watch: NoWatch,
             registry_key: None,
         }
@@ -848,7 +851,7 @@ where
     W: OnErrTerminate<Child::Err>,
 {
     /// Sets the [`Supervision`] strategy the parent will use for this child.
-    /// Defaults to [`Supervision::Stop`].
+    /// Defaults to [`Supervision::Restart`] with unlimited restarts and no backoff.
     ///
     /// # Example
     /// ```ignore

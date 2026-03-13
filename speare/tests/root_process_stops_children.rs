@@ -1,4 +1,4 @@
-use speare::{req_res, Actor, Ctx, Handle, Node, Request};
+use speare::{req_res, Actor, Ctx, Handle, Node, Request, Supervision};
 use tokio::task;
 
 struct Foo;
@@ -67,7 +67,10 @@ async fn root_supervision_works() {
     // Arrange
     let mut node = Node::default();
     let quit_on_start = false;
-    let quitter = node.actor::<Quitter>(quit_on_start).spawn();
+    let quitter = node
+        .actor::<Quitter>(quit_on_start)
+        .supervision(Supervision::Stop)
+        .spawn();
     assert!(quitter.is_alive());
 
     // Error on handle
@@ -81,7 +84,10 @@ async fn root_supervision_works() {
     // Error on init
     // Act
     let quit_on_start = true;
-    let quitter2 = node.actor::<Quitter>(quit_on_start).spawn();
+    let quitter2 = node
+        .actor::<Quitter>(quit_on_start)
+        .supervision(Supervision::Stop)
+        .spawn();
     task::yield_now().await;
 
     // Assert

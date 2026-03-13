@@ -83,6 +83,7 @@ mod one_for_all {
             id: 1,
             inits: inits.clone(),
         })
+        .supervision(Supervision::Stop)
         .watch(|_| SupervisorMsg::ChildFailed)
         .spawn_named("worker-a")
         .unwrap();
@@ -91,6 +92,7 @@ mod one_for_all {
             id: 2,
             inits: inits.clone(),
         })
+        .supervision(Supervision::Stop)
         .watch(|_| SupervisorMsg::ChildFailed)
         .spawn_named("worker-b")
         .unwrap();
@@ -99,6 +101,7 @@ mod one_for_all {
             id: 3,
             inits: inits.clone(),
         })
+        .supervision(Supervision::Stop)
         .watch(|_| SupervisorMsg::ChildFailed)
         .spawn_named("worker-c")
         .unwrap();
@@ -358,6 +361,7 @@ mod rest_for_one {
                 id: 1,
                 inits: inits.clone(),
             })
+            .supervision(Supervision::Stop)
             .watch(|_| SupervisorMsg::WorkerAFailed)
             .spawn_named("worker-a")
             .unwrap();
@@ -366,6 +370,7 @@ mod rest_for_one {
                 id: 2,
                 inits: inits.clone(),
             })
+            .supervision(Supervision::Stop)
             .spawn_named("worker-b")
             .unwrap();
 
@@ -373,6 +378,7 @@ mod rest_for_one {
                 id: 3,
                 inits: inits.clone(),
             })
+            .supervision(Supervision::Stop)
             .spawn_named("worker-c")
             .unwrap();
         }
@@ -484,6 +490,7 @@ mod rest_for_one {
                     id: 1,
                     inits: inits.clone(),
                 })
+                .supervision(Supervision::Stop)
                 .watch(|_| SupervisorMsg::WorkerAFailed)
                 .spawn_named("worker-a")
                 .unwrap();
@@ -526,6 +533,7 @@ mod rest_for_one {
                             id: 1,
                             inits: inits.clone(),
                         })
+                        .supervision(Supervision::Stop)
                         .watch(|_| SupervisorMsg::WorkerAFailed)
                         .spawn_named("worker-a")
                         .unwrap();

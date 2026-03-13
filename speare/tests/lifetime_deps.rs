@@ -1,5 +1,5 @@
 mod sync_vec;
-use speare::{Actor, Ctx, ExitReason, Node};
+use speare::{Actor, Ctx, ExitReason, Node, Supervision};
 use sync_vec::SyncVec;
 use tokio::task;
 
@@ -133,7 +133,9 @@ async fn order_preserved_even_with_startup_failure() {
     let recvd: SyncVec<_> = Default::default();
     node.actor::<Foo>(recvd.clone()).spawn();
     let fail_to_start = true;
-    node.actor::<Bar>((recvd.clone(), fail_to_start)).spawn();
+    node.actor::<Bar>((recvd.clone(), fail_to_start))
+        .supervision(Supervision::Stop)
+        .spawn();
     task::yield_now().await;
 
     // Act

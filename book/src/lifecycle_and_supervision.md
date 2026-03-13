@@ -139,15 +139,13 @@ let handle = ctx.actor::<Child>(props)
 
 There are three strategies:
 
-### Supervision::Stop (default)
+### Supervision::Stop
 
 The actor terminates on error. `exit()` is called, and the actor is done.
 
 ```rust,ignore
 ctx.actor::<Worker>(()).supervision(Supervision::Stop).spawn();
 ```
-
-This is the default -- if you call `.spawn()` without `.supervision()`, you get `Stop`.
 
 ### Supervision::Resume
 
@@ -157,9 +155,11 @@ The actor ignores the error and continues processing the next message. The actor
 ctx.actor::<Worker>(()).supervision(Supervision::Resume).spawn();
 ```
 
-### Supervision::Restart
+### Supervision::Restart (default)
 
 The actor is restarted: `exit()` is called, then `init()` runs again. The `Handle` stays the same, so senders do not need to update their references.
+
+This is the default -- if you call `.spawn()` without `.supervision()`, you get `Restart` with unlimited restarts and no backoff.
 
 ```rust,ignore
 ctx.actor::<Worker>(())
