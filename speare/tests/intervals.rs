@@ -1,6 +1,6 @@
 mod sync_vec;
 
-use speare::{Actor, Ctx, Node};
+use speare::{Actor, Ctx, Node, SourceSet, Sources};
 use std::time::Duration;
 use sync_vec::SyncVec;
 use tokio::time;
@@ -22,6 +22,11 @@ impl Actor for Ticker {
         Ok(Ticker)
     }
 
+    async fn sources(&self, _ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
+        Ok(SourceSet::new()
+            .interval(time::interval(Duration::from_millis(10)), || Msg::Tick))
+    }
+
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         ctx.props().push(msg).await;
         Ok(())
@@ -35,7 +40,6 @@ async fn interval_sends_ticks_to_actor() {
     let recvd: SyncVec<Msg> = Default::default();
     let handle = node
         .actor::<Ticker>(recvd.clone())
-        .interval(time::interval(Duration::from_millis(10)), || Msg::Tick)
         .spawn();
 
     // Act
@@ -56,7 +60,6 @@ async fn interval_and_handle_messages_both_received() {
     let recvd: SyncVec<Msg> = Default::default();
     let handle = node
         .actor::<Ticker>(recvd.clone())
-        .interval(time::interval(Duration::from_millis(10)), || Msg::Tick)
         .spawn();
 
     // Act
@@ -92,6 +95,12 @@ async fn multiple_intervals() {
             Ok(Multi)
         }
 
+        async fn sources(&self, _ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
+            Ok(SourceSet::new()
+                .interval(time::interval(Duration::from_millis(10)), || MultiMsg::Fast)
+                .interval(time::interval(Duration::from_millis(30)), || MultiMsg::Slow))
+        }
+
         async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
             ctx.props().push(msg).await;
             Ok(())
@@ -102,8 +111,6 @@ async fn multiple_intervals() {
     let recvd: SyncVec<MultiMsg> = Default::default();
     let handle = node
         .actor::<Multi>(recvd.clone())
-        .interval(time::interval(Duration::from_millis(10)), || MultiMsg::Fast)
-        .interval(time::interval(Duration::from_millis(30)), || MultiMsg::Slow)
         .spawn();
 
     // Act
@@ -126,7 +133,6 @@ async fn interval_stops_when_actor_stops() {
     let recvd: SyncVec<Msg> = Default::default();
     let handle = node
         .actor::<Ticker>(recvd.clone())
-        .interval(time::interval(Duration::from_millis(10)), || Msg::Tick)
         .spawn();
 
     // Act

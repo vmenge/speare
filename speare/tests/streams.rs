@@ -1,7 +1,7 @@
 mod sync_vec;
 
 use futures_core::Stream;
-use speare::{Actor, Ctx, Node};
+use speare::{Actor, Ctx, Node, SourceSet, Sources};
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -11,6 +11,12 @@ use tokio::{task, time};
 
 struct ChannelStream<T> {
     rx: flume::Receiver<T>,
+}
+
+impl<T> From<flume::Receiver<T>> for ChannelStream<T> {
+    fn from(rx: flume::Receiver<T>) -> Self {
+        ChannelStream { rx }
+    }
 }
 
 impl<T> Stream for ChannelStream<T> {
@@ -29,21 +35,21 @@ impl<T> Stream for ChannelStream<T> {
     }
 }
 
-fn channel_stream<T>() -> (flume::Sender<T>, ChannelStream<T>) {
-    let (tx, rx) = flume::unbounded();
-    (tx, ChannelStream { rx })
-}
-
 #[derive(Debug, PartialEq, Clone)]
 enum Msg {
     A(u32),
     B(u32),
 }
 
+struct CollectorProps {
+    recvd: SyncVec<Msg>,
+    stream_rx: flume::Receiver<Msg>,
+}
+
 struct Collector;
 
 impl Actor for Collector {
-    type Props = SyncVec<Msg>;
+    type Props = CollectorProps;
     type Msg = Msg;
     type Err = ();
 
@@ -51,8 +57,44 @@ impl Actor for Collector {
         Ok(Collector)
     }
 
+    async fn sources(&self, ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
+        let ch_stream = ChannelStream::from(ctx.props().stream_rx.clone());
+        let sources = SourceSet::new().stream(ch_stream);
+
+        Ok(sources)
+    }
+
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-        ctx.props().push(msg).await;
+        ctx.props().recvd.push(msg).await;
+        Ok(())
+    }
+}
+
+struct MultiCollectorProps {
+    recvd: SyncVec<Msg>,
+    stream_rx1: flume::Receiver<Msg>,
+    stream_rx2: flume::Receiver<Msg>,
+}
+
+struct MultiCollector;
+
+impl Actor for MultiCollector {
+    type Props = MultiCollectorProps;
+    type Msg = Msg;
+    type Err = ();
+
+    async fn init(_: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        Ok(MultiCollector)
+    }
+
+    async fn sources(&self, ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
+        Ok(SourceSet::new()
+            .stream(ChannelStream::from(ctx.props().stream_rx1.clone()))
+            .stream(ChannelStream::from(ctx.props().stream_rx2.clone())))
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        ctx.props().recvd.push(msg).await;
         Ok(())
     }
 }
@@ -62,10 +104,12 @@ async fn actor_receives_messages_from_stream() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let (tx, stream) = channel_stream();
+    let (tx, rx) = flume::unbounded();
     let _handle = node
-        .actor::<Collector>(recvd.clone())
-        .stream(stream)
+        .actor::<Collector>(CollectorProps {
+            recvd: recvd.clone(),
+            stream_rx: rx,
+        })
         .spawn();
 
     // Act
@@ -82,10 +126,12 @@ async fn actor_receives_from_both_handle_and_stream() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let (tx, stream) = channel_stream();
+    let (tx, rx) = flume::unbounded();
     let handle = node
-        .actor::<Collector>(recvd.clone())
-        .stream(stream)
+        .actor::<Collector>(CollectorProps {
+            recvd: recvd.clone(),
+            stream_rx: rx,
+        })
         .spawn();
 
     // Act
@@ -105,12 +151,14 @@ async fn actor_receives_from_multiple_streams() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let (tx1, stream1) = channel_stream();
-    let (tx2, stream2) = channel_stream();
+    let (tx1, rx1) = flume::unbounded();
+    let (tx2, rx2) = flume::unbounded();
     let _handle = node
-        .actor::<Collector>(recvd.clone())
-        .stream(stream1)
-        .stream(stream2)
+        .actor::<MultiCollector>(MultiCollectorProps {
+            recvd: recvd.clone(),
+            stream_rx1: rx1,
+            stream_rx2: rx2,
+        })
         .spawn();
 
     // Act
@@ -130,10 +178,12 @@ async fn actor_stops_cleanly_with_active_stream() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let (tx, stream) = channel_stream();
+    let (tx, rx) = flume::unbounded();
     let handle = node
-        .actor::<Collector>(recvd.clone())
-        .stream(stream)
+        .actor::<Collector>(CollectorProps {
+            recvd: recvd.clone(),
+            stream_rx: rx,
+        })
         .spawn();
 
     tx.send(Msg::A(1)).unwrap();

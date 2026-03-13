@@ -5,13 +5,12 @@ use std::{
     cmp,
     collections::HashMap,
     future::Future,
-    marker::PhantomData,
     sync::{Arc, RwLock},
     time::Duration,
 };
 use tokio::{
     task::{self, JoinSet},
-    time::{self, Interval},
+    time,
 };
 
 mod exit;
@@ -21,11 +20,9 @@ mod watch;
 
 pub use exit::*;
 pub use req_res::*;
+pub use streams::{SourceSet, Sources};
 
-use crate::{
-    streams::{IntervalStream, Merge, NoStream},
-    watch::{NoWatch, OnErrTerminate, WatchFn},
-};
+use crate::watch::{NoWatch, OnErrTerminate, WatchFn};
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
 /// with a supervision tree to handle failures.
@@ -98,6 +95,23 @@ pub trait Actor: Sized + Send + 'static {
         ctx: &mut Ctx<Self>,
     ) -> impl Future<Output = ()> + Send {
         async {}
+    }
+
+    /// Called after [`Actor::init`] to set up message sources (streams, intervals) for this actor.
+    ///
+    /// Use [`SourceSet`] to compose multiple sources:
+    /// ```ignore
+    /// async fn sources(&self, ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
+    ///     Ok(SourceSet::new()
+    ///         .interval(time::interval(Duration::from_millis(100)), || Msg::Tick)
+    ///         .stream(my_stream))
+    /// }
+    /// ```
+    fn sources(
+        &self,
+        ctx: &Ctx<Self>,
+    ) -> impl Future<Output = Result<impl Sources<Self>, Self::Err>> + Send {
+        async { Ok(SourceSet::new()) }
     }
 
     /// Called everytime your [`Actor`] receives a message.
@@ -342,10 +356,9 @@ enum ProcAction {
     Stop(Sender<()>),
 }
 
-fn spawn<Child, S, W>(mut ctx: Ctx<Child>, delay: Option<Duration>, mut stream: S, watch: W)
+fn spawn<Child, W>(mut ctx: Ctx<Child>, delay: Option<Duration>, watch: W)
 where
     Child: Actor,
-    S: Stream<Item = Child::Msg> + Send + Unpin + 'static,
     W: OnErrTerminate<Child::Err>,
 {
     tokio::spawn(async move {
@@ -366,84 +379,94 @@ where
             }
 
             Ok(mut actor) => {
-                macro_rules! on_err {
-                    ($e:expr) => {
-                        if let Supervision::Resume = ctx.supervision {
-                            continue;
-                        }
-
+                match actor.sources(&ctx).await {
+                    Err(e) => {
+                        exit_reason = Some(ExitReason::Err(e));
                         restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
-                        exit_reason = Some(ExitReason::Err($e));
                         actor_created = Some(actor);
-                        break;
-                    };
-                }
+                    }
 
-                loop {
-                    tokio::select! {
-                        biased;
-
-                        proc_msg = ctx.proc_msg_rx.recv_async() => {
-                            match proc_msg {
-                                Err(_) => break,
-
-                                Ok(ProcMsg::FromHandle(ProcAction::Stop(tx)) ) => {
-                                    exit_reason = Some(ExitReason::Handle);
-                                    stop_ack_tx = Some(tx);
-                                    break
-                                },
-
-                                Ok(ProcMsg::FromParent(ProcAction::Stop(tx))) => {
-                                    exit_reason = exit_reason.or(Some(ExitReason::Parent));
-                                    stop_ack_tx = Some(tx);
-                                    break
-                                },
-
-                                Ok(ProcMsg::FromParent(ProcAction::Restart)) => {
-                                    exit_reason = exit_reason.or(Some(ExitReason::Parent));
-                                    restart = Restart::In(Duration::ZERO);
-                                    break;
+                    Ok(mut sources) => {
+                        macro_rules! on_err {
+                            ($e:expr) => {
+                                if let Supervision::Resume = ctx.supervision {
+                                    continue;
                                 }
 
-                                Ok(ProcMsg::ChildTerminated { child_id, }) => {
-                                    if ctx.children_proc_msg_tx.remove(&child_id).is_some() {
-                                        ctx.total_children -= 1;
-                                    }
-                                }
-
-                                Ok(_) => ()
-                            }
-                        }
-
-                        Some(Ok(msg)) = ctx.tasks.join_next() => {
-                            match msg {
-                                Err(e) => {
-                                    on_err!(e);
-                                }
-
-                                Ok(msg) => {
-                                    if let Err(e) = actor.handle(msg, &mut ctx).await {
-                                        on_err!(e);
-                                    };
-                                }
-                            }
-
-                        }
-
-                        Some(msg) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)) => {
-                            if let Err(e) = actor.handle(msg, &mut ctx).await {
-                                on_err!(e);
+                                restart = Restart::from_supervision(ctx.supervision, ctx.restarts);
+                                exit_reason = Some(ExitReason::Err($e));
+                                actor_created = Some(actor);
+                                break;
                             };
                         }
 
-                        recvd = ctx.msg_rx.recv_async() => {
-                            match recvd {
-                                Err(_) => break,
+                        loop {
+                            tokio::select! {
+                                biased;
 
-                                Ok(msg) => {
+                                proc_msg = ctx.proc_msg_rx.recv_async() => {
+                                    match proc_msg {
+                                        Err(_) => break,
+
+                                        Ok(ProcMsg::FromHandle(ProcAction::Stop(tx)) ) => {
+                                            exit_reason = Some(ExitReason::Handle);
+                                            stop_ack_tx = Some(tx);
+                                            break
+                                        },
+
+                                        Ok(ProcMsg::FromParent(ProcAction::Stop(tx))) => {
+                                            exit_reason = exit_reason.or(Some(ExitReason::Parent));
+                                            stop_ack_tx = Some(tx);
+                                            break
+                                        },
+
+                                        Ok(ProcMsg::FromParent(ProcAction::Restart)) => {
+                                            exit_reason = exit_reason.or(Some(ExitReason::Parent));
+                                            restart = Restart::In(Duration::ZERO);
+                                            break;
+                                        }
+
+                                        Ok(ProcMsg::ChildTerminated { child_id, }) => {
+                                            if ctx.children_proc_msg_tx.remove(&child_id).is_some() {
+                                                ctx.total_children -= 1;
+                                            }
+                                        }
+
+                                        Ok(_) => ()
+                                    }
+                                }
+
+                                Some(Ok(msg)) = ctx.tasks.join_next() => {
+                                    match msg {
+                                        Err(e) => {
+                                            on_err!(e);
+                                        }
+
+                                        Ok(msg) => {
+                                            if let Err(e) = actor.handle(msg, &mut ctx).await {
+                                                on_err!(e);
+                                            };
+                                        }
+                                    }
+
+                                }
+
+                                Some(msg) = std::future::poll_fn(|cx| Pin::new(&mut sources).poll_next(cx)) => {
                                     if let Err(e) = actor.handle(msg, &mut ctx).await {
                                         on_err!(e);
                                     };
+                                }
+
+                                recvd = ctx.msg_rx.recv_async() => {
+                                    match recvd {
+                                        Err(_) => break,
+
+                                        Ok(msg) => {
+                                            if let Err(e) = actor.handle(msg, &mut ctx).await {
+                                                on_err!(e);
+                                            };
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -467,7 +490,7 @@ where
         let _ = stop_ack_tx.map(|tx| tx.send(()));
 
         if let Restart::In(duration) = restart {
-            spawn::<Child, S, W>(ctx, Some(duration), stream, watch)
+            spawn::<Child, W>(ctx, Some(duration), watch)
         } else if let Some(parent_tx) = ctx.parent_proc_msg_tx {
             if let Some(key) = ctx.registry_key.take() {
                 if let Ok(mut reg) = ctx.registry.write() {
@@ -541,7 +564,7 @@ impl std::fmt::Display for RegistryError {
 
 impl std::error::Error for RegistryError {}
 
-pub struct SpawnBuilder<'a, Parent, Child, S = NoStream<<Child as Actor>::Msg>, W = NoWatch>
+pub struct SpawnBuilder<'a, Parent, Child, W = NoWatch>
 where
     Parent: Actor,
     Child: Actor,
@@ -551,11 +574,10 @@ where
     supervision: Supervision,
     /// Only kicks in if child is stopped or reaches maximum number of restarts.
     watch: W,
-    stream: S,
     registry_key: Option<String>,
 }
 
-impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child, NoStream<Child::Msg>, NoWatch>
+impl<'a, Parent, Child> SpawnBuilder<'a, Parent, Child, NoWatch>
 where
     Parent: Actor,
     Child: Actor,
@@ -565,18 +587,16 @@ where
             ctx,
             props,
             supervision: Supervision::Stop,
-            stream: NoStream(PhantomData),
             watch: NoWatch,
             registry_key: None,
         }
     }
 }
 
-impl<'a, Parent, Child, S, W> SpawnBuilder<'a, Parent, Child, S, W>
+impl<'a, Parent, Child, W> SpawnBuilder<'a, Parent, Child, W>
 where
     Parent: Actor,
     Child: Actor,
-    S: Stream<Item = Child::Msg> + Send + Unpin + 'static,
     W: OnErrTerminate<Child::Err>,
 {
     pub fn supervision(mut self, supervision: Supervision) -> Self {
@@ -584,18 +604,7 @@ where
         self
     }
 
-    pub fn interval<F>(
-        self,
-        interval: Interval,
-        f: F,
-    ) -> SpawnBuilder<'a, Parent, Child, Merge<S, IntervalStream<F>>, W>
-    where
-        F: Fn() -> Child::Msg + Send + Unpin + 'static,
-    {
-        self.stream(IntervalStream { interval, f })
-    }
-
-    pub fn watch<F>(self, f: F) -> SpawnBuilder<'a, Parent, Child, S, WatchFn<F, Parent::Msg>>
+    pub fn watch<F>(self, f: F) -> SpawnBuilder<'a, Parent, Child, WatchFn<F, Parent::Msg>>
     where
         F: Fn(&Child::Err) -> Parent::Msg + Send + 'static,
     {
@@ -605,24 +614,6 @@ where
             props: self.props,
             supervision: self.supervision,
             watch: WatchFn { f, parent_msg_tx },
-            stream: self.stream,
-            registry_key: self.registry_key,
-        }
-    }
-
-    pub fn stream<S2>(self, stream: S2) -> SpawnBuilder<'a, Parent, Child, Merge<S, S2>, W>
-    where
-        S2: Stream<Item = Child::Msg> + Send + 'static,
-    {
-        SpawnBuilder {
-            ctx: self.ctx,
-            props: self.props,
-            supervision: self.supervision,
-            watch: self.watch,
-            stream: Merge {
-                a: self.stream,
-                b: stream,
-            },
             registry_key: self.registry_key,
         }
     }
@@ -655,7 +646,7 @@ where
             registry: self.ctx.registry.clone(),
         };
 
-        spawn::<Child, S, W>(ctx, None, self.stream, self.watch);
+        spawn::<Child, W>(ctx, None, self.watch);
 
         self.ctx
             .children_proc_msg_tx
