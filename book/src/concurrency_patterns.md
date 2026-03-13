@@ -118,36 +118,7 @@ The interval is created with `tokio::time::interval`, which means the first tick
 
 `SourceSet::new().stream(my_stream)` adds any type that implements `Stream<Item = Msg> + Send + Unpin + 'static`. This is the `Sources` trait from speare -- any stream whose items are the actor's message type works.
 
-```rust,ignore
-use speare::*;
-use futures_core::Stream;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-// A simple stream wrapper around flume::Receiver
-struct ReceiverStream<T> {
-    rx: flume::Receiver<T>,
-}
-
-impl<T> Stream for ReceiverStream<T> {
-    type Item = T;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.rx.try_recv() {
-            Ok(item) => Poll::Ready(Some(item)),
-            Err(flume::TryRecvError::Empty) => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
-            Err(flume::TryRecvError::Disconnected) => Poll::Ready(None),
-        }
-    }
-}
-
-impl<T> Unpin for ReceiverStream<T> {}
-```
-
-Any async data source -- a WebSocket connection, a file watcher, a Kafka consumer -- can be wrapped as a `Stream` and plugged into an actor this way. The actor does not need to know or care where the messages come from; they all arrive through `handle()`.
+Any type implementing `Stream<Item = Msg> + Send + Unpin + 'static` works -- a WebSocket connection, a file watcher, a Kafka consumer, or any async data source. The actor does not need to know or care where the messages come from; they all arrive through `handle()`.
 
 ## Combining Sources
 
