@@ -196,7 +196,7 @@ Supervision::Restart {
 The `backoff` field on `Supervision::Restart` controls how long to wait between restart attempts:
 
 - `Backoff::None` -- restart immediately, no delay.
-- `Backoff::Static(Duration)` -- fixed delay between each restart. 
+- `Backoff::Static(Duration)` -- fixed delay between each restart.
 - `Backoff::Incremental { min, max, step }` -- delay increases linearly by `step` per restart, clamped between `min` and `max`.
 
 Here is a complete example. First, define an actor that always fails:
@@ -250,10 +250,12 @@ Each time `Flaky` errors, it will be restarted after a growing delay: 500ms, the
 Sometimes a parent needs to know when a child has permanently failed. The `.watch()` method on the spawn builder lets you register a callback that fires when the child terminates due to an unrecoverable error.
 
 Watch fires when:
+
 - The strategy is `Supervision::Stop` and the child errors.
 - The strategy is `Supervision::Restart` and the child exhausts all its allowed restarts.
 
 Watch does **not** fire when:
+
 - The child is restarted successfully (it has retries remaining).
 - The child is stopped manually via `handle.stop()`.
 - The strategy is `Supervision::Resume`.
@@ -436,4 +438,4 @@ async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Se
 }
 ```
 
-Option 1 is the clean slate -- stop everything and re-spawn in order. Option 2 preserves the mailbox on the surviving children by restarting them (re-running their `init` with the same props) while only re-spawning the dead actor.
+Option 1 is the clean slate -- stop everything and re-spawn in order. Option 2 preserves the mailbox _and_ `Handle<_>` of the surviving children by restarting them (re-running their `init` with the same props) while only re-spawning the dead actor.

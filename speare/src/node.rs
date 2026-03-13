@@ -1,4 +1,4 @@
-use crate::{Actor, Ctx, Handle, ProcAction, ProcMsg, SpawnBuilder, Supervision};
+use crate::{Actor, Ctx, Handle, ProcAction, ProcMsg, RegistryError, SpawnBuilder, Supervision};
 use std::collections::HashMap;
 use tokio::task::{self, JoinSet};
 
@@ -50,6 +50,26 @@ impl Node {
         Child: Actor,
     {
         SpawnBuilder::new(&mut self.ctx, props)
+    }
+
+    pub fn get_handle_for<A: Actor>(&self) -> Result<Handle<A::Msg>, RegistryError> {
+        self.ctx.get_handle_for::<A>()
+    }
+
+    pub fn get_handle<Msg: Send + 'static>(&self, name: &str) -> Result<Handle<Msg>, RegistryError> {
+        self.ctx.get_handle(name)
+    }
+
+    pub fn send<A: Actor>(&self, msg: impl Into<A::Msg>) -> Result<(), RegistryError> {
+        self.ctx.send::<A>(msg)
+    }
+
+    pub fn send_to<Msg: Send + 'static>(
+        &self,
+        name: &str,
+        msg: impl Into<Msg>,
+    ) -> Result<(), RegistryError> {
+        self.ctx.send_to(name, msg)
     }
 
     /// Stops all children. (Drop impl is fire and forget)
