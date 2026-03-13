@@ -207,7 +207,8 @@ impl<Msg> Handle<Msg> {
         !self.msg_tx.is_disconnected()
     }
 
-    /// Sends a message to the [`Actor`], failing silently if it is no longer running.
+    /// Sends a message to the [`Actor`], returning `true` if the message was delivered
+    /// or `false` if the actor is no longer running.
     /// Takes advantage of `From<_>` implementations on the message type.
     ///
     /// # Example
@@ -216,8 +217,8 @@ impl<Msg> Handle<Msg> {
     /// handle.send(Msg::Inc(1));
     /// handle.send(1u32); // works via From<u32>
     /// ```
-    pub fn send<M: Into<Msg>>(&self, msg: M) {
-        let _ = self.msg_tx.send(msg.into());
+    pub fn send<M: Into<Msg>>(&self, msg: M) -> bool {
+        self.msg_tx.send(msg.into()).is_ok()
     }
 
     /// Sends a message to the [`Actor`] after the given duration, failing silently if it is no longer running.

@@ -59,3 +59,23 @@ async fn sends_msgs_in_correct_order() {
     // Assert
     assert_eq!(vec![TestMsg::Foo, TestMsg::Bar], recvd.clone_vec().await)
 }
+
+#[tokio::test]
+async fn send_returns_true_when_actor_alive() {
+    let mut node = Node::default();
+    let recvd: SyncVec<_> = Default::default();
+    let foo = node.actor::<Foo>(recvd).spawn();
+
+    assert!(foo.send(TestMsg::Foo));
+}
+
+#[tokio::test]
+async fn send_returns_false_when_actor_stopped() {
+    let mut node = Node::default();
+    let recvd: SyncVec<_> = Default::default();
+    let foo = node.actor::<Foo>(recvd).spawn();
+
+    foo.stop();
+    task::yield_now().await;
+    assert!(!foo.send(TestMsg::Foo));
+}
