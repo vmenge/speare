@@ -431,6 +431,7 @@ async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Se
                 .spawn();
         }
     }
+
     Ok(())
 }
 ```
