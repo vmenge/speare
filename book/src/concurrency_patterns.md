@@ -9,7 +9,7 @@ This chapter covers two mechanisms for doing work alongside an actor's main mess
 - `Ok(msg)` -- the message is delivered to the actor's `handle()` method, just like any other message.
 - `Err(e)` -- the actor's supervision strategy kicks in (restart, stop, or resume, depending on how the parent configured it).
 
-Tasks are automatically aborted when the actor stops. You can spawn them from `init` or `handle`.
+Tasks are automatically aborted when the actor stops. However, **tasks survive restarts** -- if an actor is restarted (via supervision or `restart_children()`), any in-flight tasks from the previous incarnation will continue running and their results will still be delivered to the restarted actor's `handle()`. This is by design: it avoids losing work that was already in progress. You can spawn tasks from `init` or `handle`.
 
 ```rust,ignore
 use speare::*;

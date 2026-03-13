@@ -441,6 +441,11 @@ where
     /// as a message to this [`Actor`]; its `Err` triggers the supervision strategy
     /// that this actor's parent has set for it.
     ///
+    /// Tasks are aborted when the actor stops, but **survive restarts**. If the
+    /// actor is restarted (via supervision or [`Ctx::restart_children`]), in-flight
+    /// tasks from the previous incarnation will continue running and their results
+    /// will still be delivered to the restarted actor's `handle()`.
+    ///
     /// # Example
     /// ```ignore
     /// ctx.task(async {
