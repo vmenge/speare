@@ -31,15 +31,10 @@ impl Actor for Child {
     }
 }
 
-struct Parent {
-    child_a: Handle<ChildMsg>,
-    child_b: Handle<ChildMsg>,
-}
+struct Parent;
 
-#[derive(From)]
 enum ParentMsg {
     RestartChildren,
-    GetChildren(Request<(), (Handle<ChildMsg>, Handle<ChildMsg>)>),
 }
 
 impl Actor for Parent {
@@ -48,30 +43,28 @@ impl Actor for Parent {
     type Err = ();
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-        Ok(Parent {
-            child_a: ctx
-                .actor::<Child>(())
-                .supervision(Supervision::Restart {
-                    max: Limit::None,
-                    backoff: Backoff::None,
-                })
-                .spawn(),
-            child_b: ctx
-                .actor::<Child>(())
-                .supervision(Supervision::Restart {
-                    max: Limit::None,
-                    backoff: Backoff::None,
-                })
-                .spawn(),
-        })
+        ctx.actor::<Child>(())
+            .supervision(Supervision::Restart {
+                max: Limit::None,
+                backoff: Backoff::None,
+            })
+            .spawn_named("child-a")
+            .unwrap();
+
+        ctx.actor::<Child>(())
+            .supervision(Supervision::Restart {
+                max: Limit::None,
+                backoff: Backoff::None,
+            })
+            .spawn_named("child-b")
+            .unwrap();
+
+        Ok(Parent)
     }
 
     async fn handle(&mut self, msg: ParentMsg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         match msg {
             ParentMsg::RestartChildren => ctx.restart_children(),
-            ParentMsg::GetChildren(req) => {
-                req.reply((self.child_a.clone(), self.child_b.clone()));
-            }
         }
 
         Ok(())
@@ -83,8 +76,10 @@ async fn restart_children_resets_all_children_state() {
     // Arrange
     let mut node = Node::default();
     let parent = node.actor::<Parent>(()).spawn();
+    task::yield_now().await;
 
-    let (child_a, child_b) = parent.req(()).await.unwrap();
+    let child_a: Handle<ChildMsg> = node.get_handle("child-a").unwrap();
+    let child_b: Handle<ChildMsg> = node.get_handle("child-b").unwrap();
 
     child_a.send(ChildMsg::Inc);
     child_a.send(ChildMsg::Inc);
@@ -112,8 +107,10 @@ async fn restart_children_keeps_children_alive() {
     // Arrange
     let mut node = Node::default();
     let parent = node.actor::<Parent>(()).spawn();
+    task::yield_now().await;
 
-    let (child_a, child_b) = parent.req(()).await.unwrap();
+    let child_a: Handle<ChildMsg> = node.get_handle("child-a").unwrap();
+    let child_b: Handle<ChildMsg> = node.get_handle("child-b").unwrap();
     assert!(child_a.is_alive());
     assert!(child_b.is_alive());
 
@@ -131,8 +128,10 @@ async fn restart_children_allows_continued_messaging() {
     // Arrange
     let mut node = Node::default();
     let parent = node.actor::<Parent>(()).spawn();
+    task::yield_now().await;
 
-    let (child_a, child_b) = parent.req(()).await.unwrap();
+    let child_a: Handle<ChildMsg> = node.get_handle("child-a").unwrap();
+    let child_b: Handle<ChildMsg> = node.get_handle("child-b").unwrap();
 
     // Act - restart then send new messages
     parent.send(ParentMsg::RestartChildren);

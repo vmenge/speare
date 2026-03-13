@@ -1,5 +1,5 @@
 use derive_more::From;
-use speare::{req_res, Actor, Ctx, ExitReason, Handle, Node, Request, Supervision};
+use speare::{Actor, Ctx, ExitReason, Handle, Node, Request, Supervision};
 use std::time::Duration;
 use tokio::{task, time};
 mod sync_vec;
@@ -45,29 +45,26 @@ mod one_for_one {
     use super::*;
     use speare::{Backoff, Limit};
 
-    struct MaxResetAmount {
-        child: Handle<ChildMsg>,
-    }
+    struct MaxResetAmount;
 
     impl Actor for MaxResetAmount {
         type Props = ();
-        type Msg = Request<(), Handle<ChildMsg>>;
+        type Msg = ();
         type Err = ();
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            Ok(MaxResetAmount {
-                child: ctx
-                    .actor::<Child>(0)
-                    .supervision(Supervision::Restart {
-                        max: 3.into(),
-                        backoff: Backoff::None,
-                    })
-                    .spawn(),
-            })
+            ctx.actor::<Child>(0)
+                .supervision(Supervision::Restart {
+                    max: 3.into(),
+                    backoff: Backoff::None,
+                })
+                .spawn_named("child")
+                .unwrap();
+
+            Ok(MaxResetAmount)
         }
 
-        async fn handle(&mut self, req: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
-            req.reply(self.child.clone());
+        async fn handle(&mut self, _: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
             Ok(())
         }
     }
@@ -76,11 +73,10 @@ mod one_for_one {
     async fn reaches_max_reset_limit_and_shuts_down_actor() {
         // Arrange
         let mut node = Node::default();
-        let max_reset = node.actor::<MaxResetAmount>(()).spawn();
+        node.actor::<MaxResetAmount>(()).spawn();
+        task::yield_now().await;
 
-        let (req, res) = req_res(());
-        max_reset.send(req);
-        let child = res.recv().await.unwrap();
+        let child: Handle<ChildMsg> = node.get_handle("child").unwrap();
         let kill = || async {
             child.send(ChildMsg::Fail);
             task::yield_now().await; // wait for actor to be killed
@@ -139,39 +135,35 @@ mod one_for_one {
         assert!(!child.is_alive());
     }
 
-    #[derive(Clone)]
-    struct Parent {
-        child0: Handle<ChildMsg>,
-        child1: Handle<ChildMsg>,
-        child2: Handle<ChildMsg>,
-    }
+    struct Parent;
 
     impl Actor for Parent {
         type Props = ();
-        type Msg = Request<(), Parent>;
+        type Msg = ();
         type Err = ();
 
         async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-            Ok(Parent {
-                child0: ctx
-                    .actor::<Child>(0)
-                    .supervision(Supervision::Resume)
-                    .spawn(),
+            ctx.actor::<Child>(0)
+                .supervision(Supervision::Resume)
+                .spawn_named("child-0")
+                .unwrap();
 
-                child1: ctx
-                    .actor::<Child>(1)
-                    .supervision(Supervision::Restart {
-                        max: Limit::None,
-                        backoff: Backoff::None,
-                    })
-                    .spawn(),
+            ctx.actor::<Child>(1)
+                .supervision(Supervision::Restart {
+                    max: Limit::None,
+                    backoff: Backoff::None,
+                })
+                .spawn_named("child-1")
+                .unwrap();
 
-                child2: ctx.actor::<Child>(2).spawn(),
-            })
+            ctx.actor::<Child>(2)
+                .spawn_named("child-2")
+                .unwrap();
+
+            Ok(Parent)
         }
 
-        async fn handle(&mut self, req: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
-            req.reply(self.clone());
+        async fn handle(&mut self, _: Self::Msg, _: &mut Ctx<Self>) -> Result<(), Self::Err> {
             Ok(())
         }
     }
@@ -180,15 +172,12 @@ mod one_for_one {
     async fn all_different_strategies_work() {
         // Arrange
         let mut node = Node::default();
-        let root = node.actor::<Parent>(()).spawn();
+        node.actor::<Parent>(()).spawn();
+        task::yield_now().await;
 
-        let (req, res) = req_res(());
-        root.send(req);
-        let Parent {
-            child0,
-            child1,
-            child2,
-        } = res.recv().await.unwrap();
+        let child0: Handle<ChildMsg> = node.get_handle("child-0").unwrap();
+        let child1: Handle<ChildMsg> = node.get_handle("child-1").unwrap();
+        let child2: Handle<ChildMsg> = node.get_handle("child-2").unwrap();
 
         child0.send(ChildMsg::Count);
         child1.send(ChildMsg::Count);
