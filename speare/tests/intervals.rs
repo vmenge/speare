@@ -23,8 +23,7 @@ impl Actor for Ticker {
     }
 
     async fn sources(&self, _ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
-        Ok(SourceSet::new()
-            .interval(time::interval(Duration::from_millis(10)), || Msg::Tick))
+        Ok(SourceSet::new().interval(time::interval(Duration::from_millis(10)), || Msg::Tick))
     }
 
     async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
@@ -38,9 +37,7 @@ async fn interval_sends_ticks_to_actor() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let handle = node
-        .actor::<Ticker>(recvd.clone())
-        .spawn();
+    let handle = node.actor::<Ticker>(recvd.clone()).spawn();
 
     // Act
     time::sleep(Duration::from_millis(35)).await;
@@ -49,7 +46,11 @@ async fn interval_sends_ticks_to_actor() {
 
     // Assert
     let msgs = recvd.clone_vec().await;
-    assert!(msgs.len() >= 3, "expected at least 3 ticks, got {}", msgs.len());
+    assert!(
+        msgs.len() >= 3,
+        "expected at least 3 ticks, got {}",
+        msgs.len()
+    );
     assert!(msgs.iter().all(|m| *m == Msg::Tick));
 }
 
@@ -58,9 +59,7 @@ async fn interval_and_handle_messages_both_received() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let handle = node
-        .actor::<Ticker>(recvd.clone())
-        .spawn();
+    let handle = node.actor::<Ticker>(recvd.clone()).spawn();
 
     // Act
     time::sleep(Duration::from_millis(25)).await;
@@ -109,9 +108,7 @@ async fn multiple_intervals() {
 
     let mut node = Node::default();
     let recvd: SyncVec<MultiMsg> = Default::default();
-    let handle = node
-        .actor::<Multi>(recvd.clone())
-        .spawn();
+    let handle = node.actor::<Multi>(recvd.clone()).spawn();
 
     // Act
     time::sleep(Duration::from_millis(65)).await;
@@ -122,8 +119,16 @@ async fn multiple_intervals() {
     let msgs = recvd.clone_vec().await;
     let fast_count = msgs.iter().filter(|m| **m == MultiMsg::Fast).count();
     let slow_count = msgs.iter().filter(|m| **m == MultiMsg::Slow).count();
-    assert!(fast_count >= 5, "expected at least 5 fast ticks, got {}", fast_count);
-    assert!(slow_count >= 2, "expected at least 2 slow ticks, got {}", slow_count);
+    assert!(
+        fast_count >= 5,
+        "expected at least 5 fast ticks, got {}",
+        fast_count
+    );
+    assert!(
+        slow_count >= 2,
+        "expected at least 2 slow ticks, got {}",
+        slow_count
+    );
 }
 
 #[tokio::test]
@@ -131,9 +136,7 @@ async fn interval_stops_when_actor_stops() {
     // Arrange
     let mut node = Node::default();
     let recvd: SyncVec<Msg> = Default::default();
-    let handle = node
-        .actor::<Ticker>(recvd.clone())
-        .spawn();
+    let handle = node.actor::<Ticker>(recvd.clone()).spawn();
 
     // Act
     time::sleep(Duration::from_millis(25)).await;

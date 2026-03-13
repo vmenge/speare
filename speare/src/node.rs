@@ -56,7 +56,10 @@ impl Node {
         self.ctx.get_handle_for::<A>()
     }
 
-    pub fn get_handle<Msg: Send + 'static>(&self, name: &str) -> Result<Handle<Msg>, RegistryError> {
+    pub fn get_handle<Msg: Send + 'static>(
+        &self,
+        name: &str,
+    ) -> Result<Handle<Msg>, RegistryError> {
         self.ctx.get_handle(name)
     }
 

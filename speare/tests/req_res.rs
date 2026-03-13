@@ -30,6 +30,7 @@ impl Actor for Echo {
                 req.reply(a + b);
             }
         }
+
         Ok(())
     }
 }
@@ -77,6 +78,7 @@ impl Actor for SlowReplier {
                 req.reply("done".into());
             }
         }
+
         Ok(())
     }
 }
@@ -105,6 +107,7 @@ impl Actor for ManualWrap {
             ManualMsg::Inc => self.count += 1,
             ManualMsg::GetCount(req) => req.reply(self.count),
         }
+
         Ok(())
     }
 }
@@ -137,6 +140,7 @@ impl Actor for Forwarder {
                 req.reply(result);
             }
         }
+
         Ok(())
     }
 }

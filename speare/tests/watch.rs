@@ -71,12 +71,11 @@ async fn fires_on_supervision_stop() {
     // Arrange
     let mut node = Node::default();
     let recvd = SyncVec::<ChildFailed>::default();
-    node
-        .actor::<Parent>(ParentProps {
-            supervision: Supervision::Stop,
-            recvd: recvd.clone(),
-        })
-        .spawn();
+    node.actor::<Parent>(ParentProps {
+        supervision: Supervision::Stop,
+        recvd: recvd.clone(),
+    })
+    .spawn();
 
     task::yield_now().await;
     let child: Handle<ChildMsg> = node.get_handle("child").unwrap();
@@ -97,15 +96,14 @@ async fn fires_when_max_restarts_reached() {
     // Arrange
     let mut node = Node::default();
     let recvd = SyncVec::<ChildFailed>::default();
-    node
-        .actor::<Parent>(ParentProps {
-            supervision: Supervision::Restart {
-                max: 2.into(),
-                backoff: Backoff::None,
-            },
-            recvd: recvd.clone(),
-        })
-        .spawn();
+    node.actor::<Parent>(ParentProps {
+        supervision: Supervision::Restart {
+            max: 2.into(),
+            backoff: Backoff::None,
+        },
+        recvd: recvd.clone(),
+    })
+    .spawn();
 
     task::yield_now().await;
     let child: Handle<ChildMsg> = node.get_handle("child").unwrap();
@@ -131,15 +129,14 @@ async fn does_not_fire_on_restart() {
     // Arrange
     let mut node = Node::default();
     let recvd = SyncVec::<ChildFailed>::default();
-    node
-        .actor::<Parent>(ParentProps {
-            supervision: Supervision::Restart {
-                max: Limit::None,
-                backoff: Backoff::None,
-            },
-            recvd: recvd.clone(),
-        })
-        .spawn();
+    node.actor::<Parent>(ParentProps {
+        supervision: Supervision::Restart {
+            max: Limit::None,
+            backoff: Backoff::None,
+        },
+        recvd: recvd.clone(),
+    })
+    .spawn();
 
     task::yield_now().await;
     let child: Handle<ChildMsg> = node.get_handle("child").unwrap();
@@ -158,12 +155,11 @@ async fn does_not_fire_on_handle_stop() {
     // Arrange
     let mut node = Node::default();
     let recvd = SyncVec::<ChildFailed>::default();
-    node
-        .actor::<Parent>(ParentProps {
-            supervision: Supervision::Stop,
-            recvd: recvd.clone(),
-        })
-        .spawn();
+    node.actor::<Parent>(ParentProps {
+        supervision: Supervision::Stop,
+        recvd: recvd.clone(),
+    })
+    .spawn();
 
     task::yield_now().await;
     let child: Handle<ChildMsg> = node.get_handle("child").unwrap();
@@ -182,12 +178,11 @@ async fn does_not_fire_on_resume() {
     // Arrange
     let mut node = Node::default();
     let recvd = SyncVec::<ChildFailed>::default();
-    node
-        .actor::<Parent>(ParentProps {
-            supervision: Supervision::Resume,
-            recvd: recvd.clone(),
-        })
-        .spawn();
+    node.actor::<Parent>(ParentProps {
+        supervision: Supervision::Resume,
+        recvd: recvd.clone(),
+    })
+    .spawn();
 
     task::yield_now().await;
     let child: Handle<ChildMsg> = node.get_handle("child").unwrap();

@@ -155,9 +155,7 @@ mod one_for_one {
                 .spawn_named("child-1")
                 .unwrap();
 
-            ctx.actor::<Child>(2)
-                .spawn_named("child-2")
-                .unwrap();
+            ctx.actor::<Child>(2).spawn_named("child-2").unwrap();
 
             Ok(Parent)
         }
