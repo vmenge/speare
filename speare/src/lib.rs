@@ -648,6 +648,18 @@ where
                                 }
                             }
 
+                            recvd = ctx.msg_rx.recv_async() => {
+                                match recvd {
+                                    Err(_) => break,
+
+                                    Ok(msg) => {
+                                        if let Err(e) = actor.handle(msg, &mut ctx).await {
+                                            on_err!(e);
+                                        };
+                                    }
+                                }
+                            }
+
                             Some(Ok(msg)) = ctx.tasks.join_next() => {
                                 match msg {
                                     Err(e) => {
@@ -667,18 +679,6 @@ where
                                 if let Err(e) = actor.handle(msg, &mut ctx).await {
                                     on_err!(e);
                                 };
-                            }
-
-                            recvd = ctx.msg_rx.recv_async() => {
-                                match recvd {
-                                    Err(_) => break,
-
-                                    Ok(msg) => {
-                                        if let Err(e) = actor.handle(msg, &mut ctx).await {
-                                            on_err!(e);
-                                        };
-                                    }
-                                }
                             }
                         }
                     }
