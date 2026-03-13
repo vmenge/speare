@@ -228,7 +228,7 @@ let worker = ctx.actor::<Worker>(())
 I haven't benchmarked the newest versions yet, nor done any performance optimizations as well. There is an overhead due to boxing when sending messages, but overall it is pretty fast. Benchmarks TBD and added here in the future.
 
 ### Is it production ready?
-Not yet! But soon :-)
+Yes. No. Kinda? This has been used since late 2023 in production on over 4000 scooters from [dott](https://ridedott.com/)/[TIER](https://en.wikipedia.org/wiki/Dott_(transportation_company)). I never saw any issues during my time there. Make of that what you will :)
 
 ### Why should I use this as opposed to the other 3 billion Rust actor frameworks?
 I built `speare` because I wanted a very minimal actor framework providing just enough to abstract over tokio green threads and channels without introducing a lot of boilerplate or a lot of new concepts to my co-workers. You should use `speare` if you like its design, if not then don't :-)
