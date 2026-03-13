@@ -63,13 +63,13 @@ async fn main() {
 }
 ```
 
-## What Just Happened
+## What Just Happened?
 
 Two types drive the example above: `Node` and `Handle`.
 
-**`Node`** is the root of an actor hierarchy. Calling `Node::default()` creates one. You spawn actors from it with `node.actor::<MyActor>(props).spawn()`, where `props` is whatever data the actor needs at initialization time (here just `()`). The `Node` owns all top-level actors and shuts them down when it is dropped.
+**`Node`** is the root of an actor hierarchy, created by calling `Node::default()`. You spawn actors from it with `node.actor::<MyActor>(props).spawn()`, where `props` is whatever data the actor needs at initialization time (here just `()`). The `Node` owns all top-level actors and shuts them down when it is dropped.
 
-**`Handle<Msg>`** is what `.spawn()` returns. It is a lightweight, cloneable reference to a running actor. You use it to send messages (`handle.send(msg)`), stop the actor (`handle.stop()`), or check if it is still alive (`handle.is_alive()`). Handles can be passed freely between actors and tasks.
+`.spawn()` returns a **`Handle<Msg>`**. It is a lightweight, cloneable reference to a running actor. You can use it to send messages (`handle.send(msg)`), stop the actor (`handle.stop()`), or check if it is still alive (`handle.is_alive()`). Handles can be passed freely between actors and tasks.
 
 The `Actor` trait itself requires two things: an `init` function that constructs the actor, and a `handle` function that processes each incoming message. Everything else -- lifecycle hooks, supervision, streams -- is optional.
 

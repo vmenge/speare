@@ -296,6 +296,7 @@ impl Actor for Supervisor {
                 // Could spawn a replacement, alert, etc.
             }
         }
+
         Ok(())
     }
 }
@@ -422,7 +423,7 @@ async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Se
             ctx.stop_children().await;
             // re-spawn A, B, C...
 
-            // Option 2: keep B and C's state, just reset their connections
+            // Option 2: keep B and C's mailbox
             ctx.restart_children(); // restarts the surviving B and C
             // re-spawn A (since it's already dead)
             ctx.actor::<WorkerA>(())
@@ -434,4 +435,4 @@ async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Se
 }
 ```
 
-Option 1 is the clean slate -- stop everything and re-spawn in order. Option 2 preserves state on the surviving children by restarting them (re-running their `init` with the same props) while only re-spawning the dead actor.
+Option 1 is the clean slate -- stop everything and re-spawn in order. Option 2 preserves the mailbox on the surviving children by restarting them (re-running their `init` with the same props) while only re-spawning the dead actor.

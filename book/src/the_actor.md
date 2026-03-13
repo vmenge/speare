@@ -28,6 +28,7 @@ impl Actor for Greeter {
         match msg {
             GreeterMsg::Greet(name) => println!("Hello, {name}!"),
         }
+
         Ok(())
     }
 }
@@ -51,7 +52,7 @@ The `Actor` trait requires three associated types.
 
 ### `Err: Send + Sync + 'static`
 
-`Err` is the error type. Returning `Err` from `init` or `handle` triggers the supervision strategy configured by the parent. When you don't need meaningful errors, use `()`.
+`Err` is the error type. Returning `Err` from `init` or `handle` triggers the supervision strategy configured by the parent.
 
 ## Trait Functions
 
@@ -99,7 +100,7 @@ Sets up additional message sources such as streams and intervals. This is covere
 
 ## The Context (`Ctx`)
 
-Every trait function receives a reference to `Ctx<Self>`, which provides access to the actor's environment. Here are the most commonly used methods.
+Every trait function receives a reference to `Ctx<Self>`, which provides access to the actor's environment. Some commonly used methods are:
 
 ### `ctx.props()`
 
@@ -123,6 +124,25 @@ async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
     // pass my_handle to a child, or send yourself a message:
     my_handle.send(MyMsg::Bootstrap);
     Ok(MyActor)
+}
+```
+
+### `ctx.actor()`
+
+Spawns a child actor supervised by the current actor. The child type is passed as a generic parameter and its props as the argument. Returns a `SpawnBuilder` that lets you configure a supervision strategy before calling `.spawn()`, which returns a `Handle<Child::Msg>` you can use to send messages to the child.
+
+Children are automatically stopped when the parent stops.
+
+```rust,ignore
+async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    let worker_handle = ctx.actor::<Worker>(WorkerProps { id: 1 })
+        .supervision(Supervision::Restart {
+            max: Limit::Amount(3),
+            backoff: Backoff::None,
+        })
+        .spawn();
+
+    Ok(MyActor { worker_handle })
 }
 ```
 
