@@ -30,7 +30,7 @@ impl Actor for LookupByType {
     type Err = ();
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-        let found = ctx.get_handle_for::<Worker>().is_some();
+        let found = ctx.get_handle_for::<Worker>().is_ok();
         ctx.props().push(found).await;
         Ok(LookupByType)
     }
@@ -45,7 +45,7 @@ impl Actor for LookupByName {
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
         let (name, recvd) = ctx.props();
-        let found = ctx.get_handle::<String>(name).is_some();
+        let found = ctx.get_handle::<String>(name).is_ok();
         recvd.push(found).await;
         Ok(LookupByName)
     }
@@ -214,7 +214,7 @@ impl Actor for LookupByNameWrongType {
 
     async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
         let (name, recvd) = ctx.props();
-        let found = ctx.get_handle::<u32>(name).is_some();
+        let found = ctx.get_handle::<u32>(name).is_ok();
         recvd.push(found).await;
         Ok(LookupByNameWrongType)
     }

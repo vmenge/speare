@@ -84,13 +84,27 @@ pub trait Actor: Sized + Send + 'static {
     type Msg: Send + 'static;
     type Err: Send + Sync + 'static;
 
-    /// The constructor function that will be used to create an instance of your [`Actor`]
-    /// when spawning or restarting it.
+    /// Constructs the actor. Called on initial spawn and on every restart.
+    ///
+    /// # Example
+    /// ```ignore
+    /// async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    ///     Ok(MyActor { count: ctx.props().initial })
+    /// }
+    /// ```
     fn init(ctx: &mut Ctx<Self>) -> impl Future<Output = Result<Self, Self::Err>> + Send;
 
-    /// A function that will be called if your [`Actor`] fails to init, is stopped or restarted.
+    /// Cleanup hook called when the actor stops, restarts, or fails to init.
+    /// `this` is `None` if init failed.
     ///
-    /// `this` is `None` if the [`Actor`] is failing on `init`.
+    /// # Example
+    /// ```ignore
+    /// async fn exit(this: Option<Self>, reason: ExitReason<Self>, ctx: &mut Ctx<Self>) {
+    ///     if let ExitReason::Err(e) = reason {
+    ///         eprintln!("actor failed: {e:?}");
+    ///     }
+    /// }
+    /// ```
     fn exit(
         this: Option<Self>,
         reason: ExitReason<Self>,
@@ -99,9 +113,9 @@ pub trait Actor: Sized + Send + 'static {
         async {}
     }
 
-    /// Called after [`Actor::init`] to set up message sources (streams, intervals) for this actor.
+    /// Sets up message sources (streams, intervals) after init.
     ///
-    /// Use [`SourceSet`] to compose multiple sources:
+    /// # Example
     /// ```ignore
     /// async fn sources(&self, ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
     ///     Ok(SourceSet::new()
@@ -117,6 +131,17 @@ pub trait Actor: Sized + Send + 'static {
     }
 
     /// Called everytime your [`Actor`] receives a message.
+    ///
+    /// # Example
+    /// ```ignore
+    /// async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+    ///     match msg {
+    ///         Msg::Inc(n) => self.count += n,
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     fn handle(
         &mut self,
         msg: Self::Msg,
@@ -126,7 +151,7 @@ pub trait Actor: Sized + Send + 'static {
     }
 }
 
-/// A handle to send messages to or stop a `Proccess`.
+/// A handle to send messages to or stop an [`Actor`].
 pub struct Handle<Msg> {
     msg_tx: Sender<Msg>,
     proc_msg_tx: Sender<ProcMsg>,
@@ -142,7 +167,12 @@ impl<Msg> Clone for Handle<Msg> {
 }
 
 impl<Msg> Handle<Msg> {
-    /// Stops the [`Actor`] for which this `Handle<_>` is for.
+    /// Stops the [`Actor`] associated with this handle. Does not wait for the actor to finish.
+    ///
+    /// # Example
+    /// ```ignore
+    /// handle.stop();
+    /// ```
     pub fn stop(&self) {
         let (tx, _) = flume::unbounded();
         let _ = self
@@ -150,25 +180,49 @@ impl<Msg> Handle<Msg> {
             .send(ProcMsg::FromHandle(ProcAction::Stop(tx)));
     }
 
+    /// Restarts the [`Actor`] by re-running [`Actor::init`] and [`Actor::sources`]. Does not wait for the actor to finish.
+    ///
+    /// # Example
+    /// ```ignore
+    /// handle.restart();
+    /// ```
     pub fn restart(&self) {
         let _ = self
             .proc_msg_tx
             .send(ProcMsg::FromHandle(ProcAction::Restart));
     }
 
-    /// Returns true if the [`Actor`] is still running, false if it has been stopped.
+    /// Returns `true` if the [`Actor`] is still running.
+    ///
+    /// # Example
+    /// ```ignore
+    /// if handle.is_alive() {
+    ///     handle.send(Msg::Ping);
+    /// }
+    /// ```
     pub fn is_alive(&self) -> bool {
         !self.msg_tx.is_disconnected()
     }
 
-    /// Sends a message to the [`Actor`] associated with this `Handle<_>`, failing silently if that [`Actor`] is no longer running.
+    /// Sends a message to the [`Actor`], failing silently if it is no longer running.
+    /// Takes advantage of `From<_>` implementations on the message type.
     ///
-    /// `send` can take advantage of `From<_>` implementations for the variants of the `Actor::Msg` type.
+    /// # Example
+    /// ```ignore
+    /// // Given `#[derive(From)] enum Msg { Inc(u32) }`:
+    /// handle.send(Msg::Inc(1));
+    /// handle.send(1u32); // works via From<u32>
+    /// ```
     pub fn send<M: Into<Msg>>(&self, msg: M) {
         let _ = self.msg_tx.send(msg.into());
     }
 
-    /// After the given duration, sends a message to the `Actor ` associated with this `Handle<_>`, failing silently if that [`Actor`] is no longer running.
+    /// Sends a message to the [`Actor`] after the given duration, failing silently if it is no longer running.
+    ///
+    /// # Example
+    /// ```ignore
+    /// handle.send_in(Msg::Timeout, Duration::from_secs(5));
+    /// ```
     pub fn send_in<M>(&self, msg: M, duration: Duration)
     where
         Msg: 'static + Send,
@@ -182,9 +236,21 @@ impl<Msg> Handle<Msg> {
         });
     }
 
-    /// Sends a request to the `Actor ` as long as its messages implements `From<Request<Req,Res>>`.
+    /// Sends a request and awaits a response. Requires `Msg: From<Request<Req, Res>>`.
     ///
-    /// In `speare` a `Request<Req,Res>` allows a request-response transaction between actors.
+    /// # Example
+    /// ```ignore
+    /// #[derive(From)]
+    /// enum Msg {
+    ///     GetCount(Request<(), u32>),
+    /// }
+    ///
+    /// // sender side:
+    /// let count: u32 = handle.req(()).await?;
+    ///
+    /// // receiver side, inside handle():
+    /// Msg::GetCount(req) => req.reply(self.count),
+    /// ```
     pub async fn req<Req, Res>(&self, req: Req) -> Result<Res, ReqErr>
     where
         Msg: From<Request<Req, Res>>,
@@ -194,6 +260,17 @@ impl<Msg> Handle<Msg> {
         res.recv().await
     }
 
+    /// Like [`Handle::req`], but uses a wrapper function to convert the [`Request`] into the message type.
+    /// Useful when the message variant can't implement `From<Request<Req, Res>>`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// enum Msg {
+    ///     GetCount(Request<(), u32>),
+    /// }
+    ///
+    /// let count: u32 = handle.reqw(Msg::GetCount, ()).await?;
+    /// ```
     pub async fn reqw<F, Req, Res>(&self, to_req: F, req: Req) -> Result<Res, ReqErr>
     where
         F: Fn(Request<Req, Res>) -> Msg,
@@ -204,9 +281,12 @@ impl<Msg> Handle<Msg> {
         res.recv().await
     }
 
-    /// Sends a request to the `Actor ` as long as its messages implements `From<Request<Req,Res>>`.
+    /// Like [`Handle::req`], but fails with [`ReqErr::Timeout`] if no response within the given [`Duration`].
     ///
-    /// Fails if response is not sent back within the given `Duration`.
+    /// # Example
+    /// ```ignore
+    /// let count: u32 = handle.req_timeout((), Duration::from_secs(1)).await?;
+    /// ```
     pub async fn req_timeout<Req, Res>(&self, req: Req, timeout: Duration) -> Result<Res, ReqErr>
     where
         Msg: From<Request<Req, Res>>,
@@ -216,6 +296,12 @@ impl<Msg> Handle<Msg> {
         res.recv_timeout(timeout).await
     }
 
+    /// Like [`Handle::reqw`], but fails with [`ReqErr::Timeout`] if no response within the given [`Duration`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let count: u32 = handle.reqw_timeout(Msg::GetCount, (), Duration::from_secs(1)).await?;
+    /// ```
     pub async fn reqw_timeout<F, Req, Res>(
         &self,
         to_req: F,
@@ -262,22 +348,58 @@ impl<P> Ctx<P>
 where
     P: Actor,
 {
-    /// Returns a reference to the `Actor::Props` of the current `Actor `.
+    /// Returns a reference to this [`Actor`]'s props. Props are set once at spawn time
+    /// and remain immutable for the lifetime of the actor, including across restarts.
+    ///
+    /// # Example
+    /// ```ignore
+    /// async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    ///     Ok(MyActor { count: ctx.props().initial_count })
+    /// }
+    /// ```
     pub fn props(&self) -> &P::Props {
         &self.props
     }
 
-    /// Returns a reference to a `Handle` of the current `Actor `.
+    /// Returns a [`Handle`] to the current [`Actor`], allowing it to send messages to itself
+    /// or pass its handle to child actors.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // schedule a message to self
+    /// ctx.this().send_in(Msg::Tick, Duration::from_secs(1));
+    /// ```
     pub fn this(&self) -> &Handle<P::Msg> {
         &self.handle
     }
 
-    /// Clears all the messages from the mailbox.
+    /// Drains all pending messages from this [`Actor`]'s mailbox. Useful during
+    /// restarts to discard stale messages via [`Actor::init`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    ///     ctx.clear_mailbox();
+    ///     Ok(MyActor::default())
+    /// }
+    /// ```
     pub fn clear_mailbox(&self) {
         self.msg_rx.drain();
     }
 
-    /// Spawns and supervises a child `Actor `.
+    /// Creates a [`SpawnBuilder`] for spawning a child [`Actor`]. The actor type is passed
+    /// as a generic parameter and its props as the argument. The child is supervised
+    /// by the current actor and will be stopped when the parent stops.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let handle = ctx.actor::<Worker>(WorkerProps { id: 1 })
+    ///     .supervision(Supervision::Restart {
+    ///         max: Limit::Amount(3),
+    ///         backoff: Backoff::None,
+    ///     })
+    ///     .spawn();
+    /// ```
     pub fn actor<'a, Child>(&'a mut self, props: Child::Props) -> SpawnBuilder<'a, P, Child>
     where
         Child: Actor,
@@ -285,6 +407,7 @@ where
         SpawnBuilder::new(self, props)
     }
 
+    /// Stops all child actors and waits for each to fully terminate before returning.
     pub async fn stop_children(&mut self) {
         let mut acks = Vec::with_capacity(self.total_children as usize);
         for child in self.children_proc_msg_tx.values() {
@@ -301,6 +424,17 @@ where
         self.children_proc_msg_tx.clear();
     }
 
+    /// Spawns a background async task. On completion, its `Ok` value is delivered
+    /// as a message to this [`Actor`]; its `Err` triggers the supervision strategy
+    /// that this actor's parent has set for it.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.task(async {
+    ///     let data = reqwest::get("https://example.com").await?.text().await?;
+    ///     Ok(Msg::Fetched(data))
+    /// });
+    /// ```
     pub fn task<F>(&mut self, f: F)
     where
         F: Future<Output = Result<P::Msg, P::Err>> + Send + 'static,
@@ -308,21 +442,49 @@ where
         self.tasks.spawn(f);
     }
 
-    pub fn get_handle_for<A: Actor>(&self) -> Option<Handle<A::Msg>> {
+    /// Looks up a registered [`Actor`]'s [`Handle`] by its type. The actor must have been
+    /// spawned with [`SpawnBuilder::spawn_registered`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let logger = ctx.get_handle_for::<Logger>()?;
+    /// logger.send(LogMsg::Info("hello".into()));
+    /// ```
+    pub fn get_handle_for<A: Actor>(&self) -> Result<Handle<A::Msg>, RegistryError> {
         let key = std::any::type_name::<A>();
-        let reg = self.registry.read().unwrap();
+        let reg = self.registry.read().map_err(|_| RegistryError::PoisonErr)?;
         reg.get(key)
             .and_then(|h| h.downcast_ref::<Handle<A::Msg>>())
             .cloned()
+            .ok_or_else(|| RegistryError::NotFound(key.to_string()))
     }
 
-    pub fn get_handle<Msg: Send + 'static>(&self, name: &str) -> Option<Handle<Msg>> {
-        let reg = self.registry.read().unwrap();
+    /// Looks up a registered [`Actor`]'s [`Handle`] by name. The actor must have been
+    /// spawned with [`SpawnBuilder::spawn_named`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let worker = ctx.get_handle::<WorkerMsg>("worker-1")?;
+    /// worker.send(WorkerMsg::Start);
+    /// ```
+    pub fn get_handle<Msg: Send + 'static>(&self, name: &str) -> Result<Handle<Msg>, RegistryError> {
+        let reg = self.registry.read().map_err(|_| RegistryError::PoisonErr)?;
         reg.get(name)
             .and_then(|h| h.downcast_ref::<Handle<Msg>>())
             .cloned()
+            .ok_or_else(|| RegistryError::NotFound(name.to_string()))
     }
 
+    /// Sends a message to a registered [`Actor`] looked up by type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Assuming MetricsCollector was spawned with spawn_registered():
+    /// // ctx.actor::<MetricsCollector>(props).spawn_registered()?;
+    ///
+    /// // Any actor in the system can then send to it by type:
+    /// ctx.send::<MetricsCollector>(MetricsMsg::RecordLatency(42))?;
+    /// ```
     pub fn send<A: Actor>(&self, msg: impl Into<A::Msg>) -> Result<(), RegistryError> {
         let key = std::any::type_name::<A>();
         let reg = self.registry.read().map_err(|_| RegistryError::PoisonErr)?;
@@ -338,6 +500,16 @@ where
         }
     }
 
+    /// Sends a message to a registered [`Actor`] looked up by name.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Assuming a Worker was spawned with spawn_named():
+    /// // ctx.actor::<Worker>(props).spawn_named("worker-1")?;
+    ///
+    /// // Any actor in the system can then send to it by name:
+    /// ctx.send_to::<WorkerMsg>("worker-1", WorkerMsg::Start)?;
+    /// ```
     pub fn send_to<Msg: Send + 'static>(
         &self,
         name: &str,
@@ -516,17 +688,42 @@ where
     });
 }
 
+/// Defines how a parent reacts when a child actor fails.
+///
+/// # Example
+/// ```ignore
+/// let supervision = Supervision::Restart {
+///     max: Limit::Amount(5),
+///     backoff: Backoff::Satic(Duration::from_secs(1)),
+/// };
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub enum Supervision {
+    /// Actor terminates on error.
     Stop,
+    /// Actor continues processing the next message after an error.
     Resume,
+    /// Actor is restarted on error, up to `max` times with optional `backoff`.
     Restart { max: Limit, backoff: Backoff },
 }
 
+/// Delay strategy between restart attempts.
+///
+/// # Example
+/// ```ignore
+/// let backoff = Backoff::Incremental {
+///     min: Duration::from_millis(100),
+///     max: Duration::from_secs(5),
+///     step: Duration::from_millis(500),
+/// };
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub enum Backoff {
+    /// Restart immediately with no delay.
     None,
+    /// Wait a fixed duration between restarts.
     Satic(Duration),
+    /// Linearly increase delay from `min` to `max` by `step` per restart.
     Incremental {
         min: Duration,
         max: Duration,
@@ -534,9 +731,17 @@ pub enum Backoff {
     },
 }
 
+/// Maximum number of restarts allowed.
+///
+/// # Example
+/// ```ignore
+/// let limit = Limit::Amount(3);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub enum Limit {
+    /// No limit on restarts.
     None,
+    /// Restart at most this many times.
     Amount(u64),
 }
 
@@ -577,6 +782,7 @@ impl std::fmt::Display for RegistryError {
 
 impl std::error::Error for RegistryError {}
 
+/// Builder for configuring and spawning a child [`Actor`]. Created via [`Ctx::actor`].
 pub struct SpawnBuilder<'a, Parent, Child, W = NoWatch>
 where
     Parent: Actor,
@@ -612,11 +818,38 @@ where
     Child: Actor,
     W: OnErrTerminate<Child::Err>,
 {
+    /// Sets the [`Supervision`] strategy the parent will use for this child.
+    /// Defaults to [`Supervision::Stop`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.actor::<Worker>(props)
+    ///     .supervision(Supervision::Restart {
+    ///         max: Limit::Amount(3),
+    ///         backoff: Backoff::Satic(Duration::from_secs(1)),
+    ///     })
+    ///     .spawn();
+    /// ```
     pub fn supervision(mut self, supervision: Supervision) -> Self {
         self.supervision = supervision;
         self
     }
 
+    /// Registers a callback that fires when the child terminates due to an error.
+    /// This happens when the supervision strategy is [`Supervision::Stop`], or when
+    /// [`Supervision::Restart`] has exhausted all allowed restarts. The callback maps
+    /// the child's error into a message for the parent.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.actor::<Worker>(props)
+    ///     .supervision(Supervision::Restart {
+    ///         max: Limit::Amount(3),
+    ///         backoff: Backoff::None,
+    ///     })
+    ///     .watch(|err| ParentMsg::WorkerDied(format!("{err:?}")))
+    ///     .spawn();
+    /// ```
     pub fn watch<F>(self, f: F) -> SpawnBuilder<'a, Parent, Child, WatchFn<F, Parent::Msg>>
     where
         F: Fn(&Child::Err) -> Parent::Msg + Send + 'static,
@@ -631,6 +864,7 @@ where
         }
     }
 
+    /// Spawns the child [`Actor`] and returns a [`Handle`] to it.
     pub fn spawn(self) -> Handle<Child::Msg> {
         let (msg_tx, msg_rx) = flume::unbounded(); // child
         let (proc_msg_tx, proc_msg_rx) = flume::unbounded(); // child
@@ -668,11 +902,22 @@ where
         handle
     }
 
+    /// Spawns the child and registers it in the global registry under its type name.
+    /// Other actors can then look it up via [`Ctx::get_handle_for`] or [`Ctx::send`].
+    /// Returns [`RegistryError::NameTaken`] if already registered.
     pub fn spawn_registered(self) -> Result<Handle<Child::Msg>, RegistryError> {
         let key = std::any::type_name::<Child>();
         self.spawn_named(key)
     }
 
+    /// Spawns the child and registers it in the global registry under the given name.
+    /// Other actors can then look it up via [`Ctx::get_handle`] or [`Ctx::send_to`].
+    /// Returns [`RegistryError::NameTaken`] if the name is already taken.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let h = ctx.actor::<Worker>(props).spawn_named("worker-1")?;
+    /// ```
     pub fn spawn_named(
         mut self,
         name: impl Into<String>,
