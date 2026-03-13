@@ -407,6 +407,16 @@ where
         SpawnBuilder::new(self, props)
     }
 
+    /// Restarts all child actors immediately, bypassing their supervision strategy.
+    /// Each child will re-run its [`Actor::init`] with the same props.
+    ///
+    /// This is fire-and-forget: it does not wait for children to finish restarting.
+    pub fn restart_children(&self) {
+        for child in self.children_proc_msg_tx.values() {
+            let _ = child.send(ProcMsg::FromParent(ProcAction::Restart));
+        }
+    }
+
     /// Stops all child actors and waits for each to fully terminate before returning.
     pub async fn stop_children(&mut self) {
         let mut acks = Vec::with_capacity(self.total_children as usize);
