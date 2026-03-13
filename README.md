@@ -76,6 +76,7 @@ struct CounterProps {
 #[derive(From)]
 enum CounterMsg {
     Add(u32),
+    #[from(skip)]
     Subtract(u32),
     GetCount(Request<(), u32>),
 }
