@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 use sync_vec::SyncVec;
-use tokio::{task, time};
+use tokio::task;
 
 struct ChannelStream<T> {
     rx: flume::Receiver<T>,
@@ -191,7 +191,7 @@ async fn actor_stops_cleanly_with_active_stream() {
 
     // Act
     handle.stop();
-    time::sleep(std::time::Duration::from_millis(1)).await;
+    task::yield_now().await;
 
     // Assert
     assert!(!handle.is_alive());

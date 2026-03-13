@@ -1,10 +1,8 @@
 mod sync_vec;
 
 use speare::{Actor, Backoff, Ctx, Handle, Limit, Node, Supervision};
-use tokio::task;
-use std::time::Duration;
 use sync_vec::SyncVec;
-use tokio::time;
+use tokio::task;
 
 struct Child;
 
@@ -85,7 +83,7 @@ async fn fires_on_supervision_stop() {
 
     // Act
     child.send(ChildMsg::Fail);
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(
@@ -116,12 +114,12 @@ async fn fires_when_max_restarts_reached() {
 
     // 1st fail -> restart (watch should NOT fire)
     child.send(ChildMsg::Fail);
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
     assert!(recvd.clone_vec().await.is_empty());
 
     // 2nd fail -> max reached, terminates (watch SHOULD fire)
     child.send(ChildMsg::Fail);
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
     assert_eq!(
         recvd.clone_vec().await,
         vec![ChildFailed("child failed".to_string())]
@@ -148,7 +146,7 @@ async fn does_not_fire_on_restart() {
 
     // Act
     child.send(ChildMsg::Fail);
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert!(child.is_alive());
@@ -172,7 +170,7 @@ async fn does_not_fire_on_handle_stop() {
 
     // Act
     child.stop();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert!(!child.is_alive());
@@ -196,7 +194,7 @@ async fn does_not_fire_on_resume() {
 
     // Act
     child.send(ChildMsg::Fail);
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert!(child.is_alive());

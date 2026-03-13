@@ -1,9 +1,8 @@
 mod sync_vec;
 
 use speare::{Actor, Ctx, Node, RegistryError};
-use std::time::Duration;
 use sync_vec::SyncVec;
-use tokio::time;
+use tokio::task;
 
 struct Worker;
 
@@ -94,7 +93,7 @@ async fn spawn_registered_actor_is_functional() {
 
     // Act
     handle.send("hello".to_string());
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec!["hello".to_string()]);
@@ -163,7 +162,7 @@ async fn spawn_named_actor_is_functional() {
 
     // Act
     handle.send("world".to_string());
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec!["world".to_string()]);
@@ -179,7 +178,7 @@ async fn get_handle_for_returns_none_when_not_registered() {
 
     // Act - LookupByType tries to find Worker, which was never registered
     node.actor::<LookupByType>(recvd.clone()).spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![false]);
@@ -197,7 +196,7 @@ async fn get_handle_for_finds_registered_actor() {
 
     // Act - LookupByType tries to find Worker, which was registered above
     node.actor::<LookupByType>(recvd.clone()).spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![true]);
@@ -233,7 +232,7 @@ async fn get_handle_returns_none_for_wrong_msg_type() {
     // Act - lookup with u32 instead of String (Worker::Msg = String)
     node.actor::<LookupByNameWrongType>(("my-worker".to_string(), recvd.clone()))
         .spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![false]);
@@ -250,7 +249,7 @@ async fn get_handle_returns_none_when_not_registered() {
     // Act
     node.actor::<LookupByName>(("nonexistent".to_string(), recvd.clone()))
         .spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![false]);
@@ -269,7 +268,7 @@ async fn get_handle_finds_named_actor() {
     // Act
     node.actor::<LookupByName>(("my-worker".to_string(), recvd.clone()))
         .spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![true]);
@@ -288,7 +287,7 @@ async fn get_handle_returns_none_for_wrong_name() {
     // Act
     node.actor::<LookupByName>(("wrong-name".to_string(), recvd.clone()))
         .spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![false]);
@@ -321,7 +320,7 @@ async fn send_delivers_msg_to_registered_actor() {
 
     // Act
     node.actor::<SendByType>(()).spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec!["via-send".to_string()]);
@@ -352,7 +351,7 @@ async fn send_returns_not_found_when_not_registered() {
 
     // Act
     node.actor::<SendByTypeNotFound>(recvd.clone()).spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![true]);
@@ -387,7 +386,7 @@ async fn send_to_delivers_msg_to_named_actor() {
 
     // Act
     node.actor::<SendByName>("target".to_string()).spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec!["via-send-to".to_string()]);
@@ -418,7 +417,7 @@ async fn send_to_returns_not_found_when_not_registered() {
 
     // Act
     node.actor::<SendByNameNotFound>(recvd.clone()).spawn();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![true]);
@@ -437,7 +436,7 @@ async fn named_actor_deregisters_on_stop() {
 
     // Act
     handle.stop();
-    time::sleep(Duration::from_millis(50)).await;
+    task::yield_now().await;
 
     // Assert - name should be available again
     let result = node
@@ -457,7 +456,7 @@ async fn registered_actor_deregisters_on_stop() {
 
     // Act
     handle.stop();
-    time::sleep(Duration::from_millis(50)).await;
+    task::yield_now().await;
 
     // Assert - type name should be available again
     let result = node.actor::<Worker>(SyncVec::default()).spawn_registered();

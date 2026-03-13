@@ -1,7 +1,6 @@
 use derive_more::From;
 use speare::{Actor, Ctx, ExitReason, Handle, Node, Request, Supervision};
-use std::time::Duration;
-use tokio::{task, time};
+use tokio::task;
 mod sync_vec;
 
 struct Child {
@@ -207,7 +206,7 @@ mod one_for_one {
 
         // Fail child2, Actor should stop. Other counts should remain unaffected.
         child2.send(ChildMsg::Fail);
-        time::sleep(Duration::from_nanos(1)).await;
+        task::yield_now().await;
 
         assert!(!child2.is_alive());
         assert_eq!(

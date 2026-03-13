@@ -3,7 +3,7 @@ mod sync_vec;
 use speare::{Actor, Ctx, Node};
 use std::time::Duration;
 use sync_vec::SyncVec;
-use tokio::time;
+use tokio::{task, time};
 
 #[derive(Debug, PartialEq, Clone)]
 enum Msg {
@@ -37,7 +37,7 @@ async fn task_result_is_handled_as_message() {
     let _handle = node.actor::<Spawner>(recvd.clone()).spawn();
 
     // Act
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert_eq!(recvd.clone_vec().await, vec![Msg::FromTask(42)]);
@@ -180,9 +180,9 @@ async fn tasks_aborted_when_actor_stops() {
     let handle = node.actor::<LongTasker>(completed_clone).spawn();
 
     // Act
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
     handle.stop();
-    time::sleep(Duration::from_millis(10)).await;
+    task::yield_now().await;
 
     // Assert
     assert!(!handle.is_alive());
