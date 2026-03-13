@@ -42,9 +42,8 @@ impl Actor for Child {
 }
 
 mod one_for_one {
-    use speare::{Backoff, Limit};
-
     use super::*;
+    use speare::{Backoff, Limit};
 
     struct MaxResetAmount {
         child: Handle<ChildMsg>,
@@ -119,7 +118,7 @@ mod one_for_one {
 
         let kill = || async {
             child.send(ChildMsg::Fail);
-            time::sleep(Duration::from_nanos(1)).await; // wait for actor to be killed
+            task::yield_now().await; // wait for actor to be killed
         };
 
         // Act & Assert
