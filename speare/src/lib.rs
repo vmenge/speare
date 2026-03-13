@@ -786,7 +786,7 @@ impl PartialEq<u64> for Limit {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RegistryError {
     NameTaken(String),
     NotFound(String),
