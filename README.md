@@ -57,9 +57,9 @@ async fn main() {
 }
 ```
 
-## More Features
+## Props & Request-Response
 
-Props, request-response via `Request<Req, Res>`, the `From` trick for ergonomic sends, and the `exit` lifecycle hook:
+Props, request-response via `Request<Req, Res>`, and the `From` trick for ergonomic sends:
 
 ```rust
 use speare::*;
@@ -76,8 +76,6 @@ struct CounterProps {
 #[derive(From)]
 enum CounterMsg {
     Add(u32),
-    #[from(skip)]
-    Subtract(u32),
     GetCount(Request<(), u32>),
 }
 
@@ -95,17 +93,10 @@ impl Actor for Counter {
     async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         match msg {
             CounterMsg::Add(n) => self.count += n,
-            CounterMsg::Subtract(n) => self.count = self.count.saturating_sub(n),
             CounterMsg::GetCount(req) => req.reply(self.count),
         }
 
         Ok(())
-    }
-
-    async fn exit(this: Option<Self>, _reason: ExitReason<Self>, _ctx: &mut Ctx<Self>) {
-        if let Some(counter) = this {
-            println!("Counter exiting with count: {}", counter.count);
-        }
     }
 }
 
@@ -119,7 +110,6 @@ async fn main() {
     counter.send(CounterMsg::Add(5));
     counter.send(7u32); // auto-converted to CounterMsg::Add via From
 
-    // Request-response: send a request and await the reply
     let count: u32 = counter.req(()).await.unwrap();
     println!("Count is {count}"); // 22
 
@@ -127,82 +117,102 @@ async fn main() {
 }
 ```
 
-Supervision with automatic restarts, backoff, and a watch callback:
+## PubSub & Registry
+
+Type-safe publish/subscribe across actors, and a global registry for finding actors by type or name:
+
+```rust
+use speare::*;
+use derive_more::From;
+
+// PubSub messages must be Clone
+#[derive(Clone)]
+struct Event(String);
+
+// Logger subscribes to the "events" topic
+struct Logger;
+
+#[derive(From)]
+enum LoggerMsg {
+    Event(Event),
+}
+
+impl Actor for Logger {
+    type Props = ();
+    type Msg = LoggerMsg;
+    type Err = ();
+
+    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        ctx.subscribe::<Event>("events").unwrap();
+        Ok(Logger)
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        match msg {
+            LoggerMsg::Event(Event(e)) => println!("[log] {e}"),
+        }
+
+        Ok(())
+    }
+}
+
+// Greeter is registered so others can find it without holding a Handle
+struct Greeter;
+
+impl Actor for Greeter {
+    type Props = ();
+    type Msg = String;
+    type Err = ();
+
+    async fn init(_ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        Ok(Greeter)
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        let greeting = format!("Hello, {msg}!");
+
+        // publish to all "events" subscribers
+        ctx.publish("events", Event(greeting)).unwrap();
+
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let mut node = Node::default();
+    node.actor::<Logger>(()).spawn();
+    node.actor::<Greeter>(()).spawn_registered().unwrap();
+
+    // look up Greeter by type and send — no Handle needed
+    node.send::<Greeter>("world".to_string()).unwrap();
+    // Logger will print: [log] Hello, world!
+
+    // you can also use spawn_named("name") and send_to::<Msg>("name", msg)
+    node.shutdown().await;
+}
+```
+
+## Supervision
+
+Spawn supervised children with automatic restarts, backoff, and a watch callback for when retries are exhausted:
 
 ```rust
 use speare::*;
 use std::time::Duration;
 
-struct Worker;
-enum WorkerMsg { Process(String) }
-
-#[derive(Debug)]
-struct WorkerErr(String);
-
-impl Actor for Worker {
-    type Props = ();
-    type Msg = WorkerMsg;
-    type Err = WorkerErr;
-
-    async fn init(_ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-        Ok(Worker)
-    }
-
-    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-        match msg {
-            WorkerMsg::Process(job) => println!("Processing: {job}"),
-        }
-
-        Ok(())
-    }
-}
-
-struct Manager {
-    worker: Handle<WorkerMsg>,
-}
-
-enum ManagerMsg {
-    Dispatch(String),
-    WorkerDied(String),
-}
-
-impl Actor for Manager {
-    type Props = ();
-    type Msg = ManagerMsg;
-    type Err = ();
-
-    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
-        // Spawn a child with restart supervision and a watch callback.
-        // If the worker exhausts its 3 retries, watch fires and notifies us.
-        let worker = ctx.actor::<Worker>(())
-            .supervision(Supervision::Restart {
-                max: Limit::Amount(3),
-                backoff: Backoff::Incremental {
-                    min: Duration::from_millis(100),
-                    max: Duration::from_secs(5),
-                    step: Duration::from_millis(500),
-                },
-            })
-            .watch(|err| ManagerMsg::WorkerDied(format!("{err:?}")))
-            .spawn();
-
-        Ok(Manager { worker })
-    }
-
-    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
-        match msg {
-            ManagerMsg::Dispatch(job) => {
-                self.worker.send(WorkerMsg::Process(job));
-            }
-
-            ManagerMsg::WorkerDied(reason) => {
-                println!("Worker permanently failed: {reason}");
-            }
-        }
-
-        Ok(())
-    }
-}
+// inside a parent actor's init:
+let worker = ctx.actor::<Worker>(())
+    .supervision(Supervision::Restart {
+        max: Limit::Amount(3),
+        backoff: Backoff::Incremental {
+            min: Duration::from_millis(100),
+            max: Duration::from_secs(5),
+            step: Duration::from_millis(500),
+        },
+    })
+    .watch(|err| ManagerMsg::WorkerDied(format!("{err:?}")))
+    .spawn();
 ```
 
 
