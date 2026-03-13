@@ -177,6 +177,8 @@ The `max` field on `Supervision::Restart` controls how many times the actor can 
 - `Limit::None` -- unlimited restarts. The actor will be restarted every time it errors, forever. Use with caution.
 - `Limit::Amount(n)` -- restart at most `n` times. Once the limit is reached, the actor terminates for real, just as if the strategy were `Supervision::Stop`.
 
+> **Note**: `Limit` implements `From<u64>`, but `0` maps to `Limit::None` (unlimited), not zero restarts. If you want zero restarts (i.e., never restart), use `Supervision::Stop` instead.
+
 ```rust,ignore
 // Restart up to 5 times, then give up
 Supervision::Restart {

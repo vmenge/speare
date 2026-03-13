@@ -67,7 +67,7 @@ async fn main() {
 
 Two types drive the example above: `Node` and `Handle`.
 
-**`Node`** is the root of an actor hierarchy, created by calling `Node::default()`. You spawn actors from it with `node.actor::<MyActor>(props).spawn()`, where `props` is whatever data the actor needs at initialization time (here just `()`). The `Node` owns all top-level actors and shuts them down when it is dropped.
+**`Node`** is the root of an actor hierarchy, created by calling `Node::default()`. You spawn actors from it with `node.actor::<MyActor>(props).spawn()`, where `props` is whatever data the actor needs at initialization time (here just `()`). The `Node` owns all top-level actors. When dropped, it sends stop signals to its children, but the cleanup runs in a background tokio task that may not complete if the runtime is also shutting down. For guaranteed cleanup, call `node.shutdown().await` before the `Node` is dropped.
 
 `.spawn()` returns a **`Handle<Msg>`**. It is a lightweight, cloneable reference to a running actor. You can use it to send messages (`handle.send(msg)`), stop the actor (`handle.stop()`), or check if it is still alive (`handle.is_alive()`). Handles can be passed freely between actors and tasks.
 

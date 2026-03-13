@@ -115,6 +115,9 @@ pub trait Actor: Sized + Send + 'static {
 
     /// Sets up message sources (streams, intervals) after init.
     ///
+    /// Sources added earlier in the [`SourceSet`] chain have higher polling priority.
+    /// If an earlier source is consistently ready, later sources may be starved.
+    ///
     /// # Example
     /// ```ignore
     /// async fn sources(&self, ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Err> {
@@ -477,7 +480,10 @@ where
     /// let worker = ctx.get_handle::<WorkerMsg>("worker-1")?;
     /// worker.send(WorkerMsg::Start);
     /// ```
-    pub fn get_handle<Msg: Send + 'static>(&self, name: &str) -> Result<Handle<Msg>, RegistryError> {
+    pub fn get_handle<Msg: Send + 'static>(
+        &self,
+        name: &str,
+    ) -> Result<Handle<Msg>, RegistryError> {
         let reg = self.registry.read().map_err(|_| RegistryError::PoisonErr)?;
         reg.get(name)
             .and_then(|h| h.downcast_ref::<Handle<Msg>>())
@@ -622,13 +628,18 @@ where
                                         break;
                                     }
 
+
+                                    Ok(ProcMsg::FromHandle(ProcAction::Restart)) => {
+                                        exit_reason = exit_reason.or(Some(ExitReason::Handle));
+                                        restart = Restart::In(Duration::ZERO);
+                                        break;
+                                    }
+
                                     Ok(ProcMsg::ChildTerminated { child_id, }) => {
                                         if ctx.children_proc_msg_tx.remove(&child_id).is_some() {
                                             ctx.total_children -= 1;
                                         }
                                     }
-
-                                    Ok(_) => ()
                                 }
                             }
 
@@ -755,6 +766,8 @@ pub enum Limit {
     Amount(u64),
 }
 
+/// **Note**: `0` maps to [`Limit::None`] (unlimited), not zero restarts.
+/// If you want zero restarts (i.e., never restart), use [`Supervision::Stop`] instead.
 impl From<u64> for Limit {
     fn from(value: u64) -> Self {
         match value {

@@ -72,7 +72,13 @@ impl Node {
         self.ctx.send_to(name, msg)
     }
 
-    /// Stops all children. (Drop impl is fire and forget)
+    /// Stops all children and waits for each to fully terminate before returning.
+    ///
+    /// Prefer calling this over letting the `Node` be dropped. The `Drop` implementation
+    /// sends stop signals to children but spawns a background tokio task to await their
+    /// acknowledgments. If the tokio runtime is shutting down at the same time (e.g. the
+    /// end of `#[tokio::main]`), that background task may never execute, leaving children
+    /// in a partially-stopped state.
     pub async fn shutdown(&mut self) {
         self.ctx.stop_children().await;
     }
@@ -84,6 +90,11 @@ impl Default for Node {
     }
 }
 
+/// Sends stop signals to all children and spawns a background task to await their
+/// acknowledgments. Because the awaiting happens in a spawned tokio task, the children
+/// may **not** fully shut down if the tokio runtime is also shutting down (e.g. at the
+/// end of `#[tokio::main]`). For guaranteed cleanup, call [`Node::shutdown`] before
+/// dropping the `Node`.
 impl Drop for Node {
     fn drop(&mut self) {
         let mut acks = Vec::with_capacity(self.ctx.total_children as usize);

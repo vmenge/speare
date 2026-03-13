@@ -162,4 +162,6 @@ async fn sources(&self, _ctx: &Ctx<Self>) -> Result<impl Sources<Self>, Self::Er
 }
 ```
 
-All sources are merged and polled concurrently. Messages from intervals, streams, and regular `handle.send()` calls all arrive in `handle()` -- the actor processes them one at a time in the order they become ready.
+All sources are merged and polled together. Messages from intervals, streams, and regular `handle.send()` calls all arrive in `handle()` -- the actor processes them one at a time in the order they become ready.
+
+**Polling priority**: sources added earlier in the chain have higher priority. If an earlier source is consistently ready, later sources may be starved. In practice this rarely matters for intervals and moderate-throughput streams, but keep it in mind when combining a high-throughput stream with other sources -- place it last in the chain.

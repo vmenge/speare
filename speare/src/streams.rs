@@ -10,6 +10,12 @@ use tokio::time::Interval;
 pub trait Sources<A: Actor>: Stream<Item = A::Msg> + Send + Unpin + 'static {}
 impl<S, A: Actor> Sources<A> for S where S: Stream<Item = A::Msg> + Send + Unpin + 'static {}
 
+/// A composable collection of message sources (intervals and streams) for an actor.
+///
+/// Sources added **earlier** in the chain have higher polling priority. If an earlier source
+/// is consistently ready, later sources may be starved. In practice this rarely matters
+/// for intervals and moderate-throughput streams, but keep it in mind when combining a
+/// high-throughput stream with other sources.
 pub struct SourceSet<S>(S);
 
 impl<M: Send + 'static> SourceSet<NoStream<M>> {
