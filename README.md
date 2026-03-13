@@ -7,10 +7,11 @@
 `speare` is a minimalistic actor framework. A thin abstraction over tokio tasks and flume channels with supervision inspired by Akka.NET. Read [The Speare Book](https://vmenge.github.io/speare/) for more details on how to use the library.
 
 ## Quick Look
-Below is an example of a very minimal `Counter` `Actor`.
+A minimal `Counter` actor:
 
 ```rust
 use speare::*;
+use std::time::Duration;
 use tokio::time;
 
 struct Counter {
@@ -20,7 +21,7 @@ struct Counter {
 enum CounterMsg {
     Add(u32),
     Subtract(u32),
-    Print
+    Print,
 }
 
 impl Actor for Counter {
@@ -28,15 +29,15 @@ impl Actor for Counter {
     type Msg = CounterMsg;
     type Err = ();
 
-    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    async fn init(_ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
         Ok(Counter { count: 0 })
     }
 
-    async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
         match msg {
             CounterMsg::Add(n) => self.count += n,
             CounterMsg::Subtract(n) => self.count -= n,
-            CounterMsg::Print => println!("Count is {}", self.count)
+            CounterMsg::Print => println!("Count is {}", self.count),
         }
 
         Ok(())
@@ -46,21 +47,166 @@ impl Actor for Counter {
 #[tokio::main]
 async fn main() {
     let mut node = Node::default();
-    let counter = node.spawn::<Counter>(());
+    let counter = node.actor::<Counter>(()).spawn();
+
     counter.send(CounterMsg::Add(5));
     counter.send(CounterMsg::Subtract(2));
     counter.send(CounterMsg::Print); // will print 3
 
-    // We wait so the program doesn't end before we print.
-    time::sleep(Duration::from_millis(1)).await;
+    time::sleep(Duration::from_millis(10)).await;
+}
+```
+
+## More Features
+
+Props, request-response via `Request<Req, Res>`, the `From` trick for ergonomic sends, and the `exit` lifecycle hook:
+
+```rust
+use speare::*;
+use derive_more::From;
+
+struct Counter {
+    count: u32,
+}
+
+struct CounterProps {
+    initial_count: u32,
+}
+
+#[derive(From)]
+enum CounterMsg {
+    Add(u32),
+    Subtract(u32),
+    GetCount(Request<(), u32>),
+}
+
+impl Actor for Counter {
+    type Props = CounterProps;
+    type Msg = CounterMsg;
+    type Err = ();
+
+    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        Ok(Counter {
+            count: ctx.props().initial_count,
+        })
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        match msg {
+            CounterMsg::Add(n) => self.count += n,
+            CounterMsg::Subtract(n) => self.count = self.count.saturating_sub(n),
+            CounterMsg::GetCount(req) => req.reply(self.count),
+        }
+
+        Ok(())
+    }
+
+    async fn exit(this: Option<Self>, _reason: ExitReason<Self>, _ctx: &mut Ctx<Self>) {
+        if let Some(counter) = this {
+            println!("Counter exiting with count: {}", counter.count);
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let mut node = Node::default();
+    let counter = node
+        .actor::<Counter>(CounterProps { initial_count: 10 })
+        .spawn();
+
+    counter.send(CounterMsg::Add(5));
+    counter.send(7u32); // auto-converted to CounterMsg::Add via From
+
+    // Request-response: send a request and await the reply
+    let count: u32 = counter.req(()).await.unwrap();
+    println!("Count is {count}"); // 22
+
+    node.shutdown().await;
+}
+```
+
+Supervision with automatic restarts, backoff, and a watch callback:
+
+```rust
+use speare::*;
+use std::time::Duration;
+
+struct Worker;
+enum WorkerMsg { Process(String) }
+
+#[derive(Debug)]
+struct WorkerErr(String);
+
+impl Actor for Worker {
+    type Props = ();
+    type Msg = WorkerMsg;
+    type Err = WorkerErr;
+
+    async fn init(_ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        Ok(Worker)
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        match msg {
+            WorkerMsg::Process(job) => println!("Processing: {job}"),
+        }
+
+        Ok(())
+    }
+}
+
+struct Manager {
+    worker: Handle<WorkerMsg>,
+}
+
+enum ManagerMsg {
+    Dispatch(String),
+    WorkerDied(String),
+}
+
+impl Actor for Manager {
+    type Props = ();
+    type Msg = ManagerMsg;
+    type Err = ();
+
+    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        // Spawn a child with restart supervision and a watch callback.
+        // If the worker exhausts its 3 retries, watch fires and notifies us.
+        let worker = ctx.actor::<Worker>(())
+            .supervision(Supervision::Restart {
+                max: Limit::Amount(3),
+                backoff: Backoff::Incremental {
+                    min: Duration::from_millis(100),
+                    max: Duration::from_secs(5),
+                    step: Duration::from_millis(500),
+                },
+            })
+            .watch(|err| ManagerMsg::WorkerDied(format!("{err:?}")))
+            .spawn();
+
+        Ok(Manager { worker })
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, _ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        match msg {
+            ManagerMsg::Dispatch(job) => {
+                self.worker.send(WorkerMsg::Process(job));
+            }
+
+            ManagerMsg::WorkerDied(reason) => {
+                println!("Worker permanently failed: {reason}");
+            }
+        }
+
+        Ok(())
+    }
 }
 ```
 
 
 ## Why `speare`?
 `speare` is a minimal abstraction layer over [tokio green threads](https://tokio.rs/tokio/tutorial/spawning#tasks) and [flume channels](https://github.com/zesterer/flume), offering functionality to manage these threads, and pass messages between these in a more practical manner. The question instead should be: *"why message passing (channels) instead of sharing state (e.g. `Arc<Mutex<T>>`)?"*
-
-
 
 - **Easier reasoning**: With message passing, each piece of data is owned by a single thread at a time, making the flow of data and control easier to reason about.
 - **Deadlock Prevention**: Shared state with locks (like mutexes) can lead to deadlocks if not managed carefully. Message passing, especially in Rust, is less prone to deadlocks as it doesn’t involve traditional locking mechanisms.
