@@ -1,4 +1,6 @@
-use crate::{Actor, Ctx, Handle, ProcAction, ProcMsg, RegistryError, SpawnBuilder, Supervision};
+use crate::{
+    Actor, Ctx, Handle, ProcAction, ProcMsg, PubSubError, RegistryError, SpawnBuilder, Supervision,
+};
 use std::collections::HashMap;
 use tokio::task::{self, JoinSet};
 
@@ -17,6 +19,10 @@ impl Actor for Node {
 }
 
 impl Node {
+    /// Creates a new `Node`, the root of an actor supervision tree.
+    ///
+    /// A `Node` is the entry point for spawning actors. It holds shared state
+    /// (registry, pub/sub bus) that all actors in the tree can access.
     pub fn new() -> Self {
         let (msg_tx, msg_rx) = flume::unbounded(); // child
         let (proc_msg_tx, proc_msg_rx) = flume::unbounded(); // child
@@ -40,11 +46,22 @@ impl Node {
             tasks: JoinSet::new(),
             registry_key: None,
             registry: Default::default(),
+            pubsub: Default::default(),
+            subscription_ids: Vec::new(),
         };
 
         Self { ctx }
     }
 
+    /// Creates a [`SpawnBuilder`] for spawning a top-level [`Actor`]. The actor type
+    /// is passed as a generic parameter and its props as the argument.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let handle = node.actor::<MyActor>(my_props)
+    ///     .supervision(Supervision::Stop)
+    ///     .spawn();
+    /// ```
     pub fn actor<'a, Child>(&'a mut self, props: Child::Props) -> SpawnBuilder<'a, Node, Child>
     where
         Child: Actor,
@@ -52,10 +69,26 @@ impl Node {
         SpawnBuilder::new(&mut self.ctx, props)
     }
 
+    /// Looks up a registered [`Actor`]'s [`Handle`] by its type. The actor must have been
+    /// spawned with [`SpawnBuilder::spawn_registered`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let logger = node.get_handle_for::<Logger>()?;
+    /// logger.send(LogMsg::Info("hello".into()));
+    /// ```
     pub fn get_handle_for<A: Actor>(&self) -> Result<Handle<A::Msg>, RegistryError> {
         self.ctx.get_handle_for::<A>()
     }
 
+    /// Looks up a registered [`Actor`]'s [`Handle`] by name. The actor must have been
+    /// spawned with [`SpawnBuilder::spawn_named`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let worker = node.get_handle::<WorkerMsg>("worker-1")?;
+    /// worker.send(WorkerMsg::Start);
+    /// ```
     pub fn get_handle<Msg: Send + 'static>(
         &self,
         name: &str,
@@ -63,16 +96,37 @@ impl Node {
         self.ctx.get_handle(name)
     }
 
+    /// Sends a message to a registered [`Actor`] looked up by type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node.send::<MetricsCollector>(MetricsMsg::RecordLatency(42))?;
+    /// ```
     pub fn send<A: Actor>(&self, msg: impl Into<A::Msg>) -> Result<(), RegistryError> {
         self.ctx.send::<A>(msg)
     }
 
+    /// Sends a message to a registered [`Actor`] looked up by name.
+    ///
+    /// # Example
+    /// ```ignore
+    /// node.send_to("worker-1", WorkerMsg::Start)?;
+    /// ```
     pub fn send_to<Msg: Send + 'static>(
         &self,
         name: &str,
         msg: impl Into<Msg>,
     ) -> Result<(), RegistryError> {
         self.ctx.send_to(name, msg)
+    }
+
+    /// Publishes a message to all subscribers of a topic. The message is cloned
+    /// for each subscriber.
+    ///
+    /// Publishing to a topic with no subscribers is a no-op and returns `Ok(())`.
+    /// Returns `PubSubError::TypeMismatch` if the topic exists with a different type.
+    pub fn publish<T: Send + 'static>(&self, topic: &str, msg: T) -> Result<(), PubSubError> {
+        self.ctx.publish(topic, msg)
     }
 
     /// Stops all children and waits for each to fully terminate before returning.

@@ -15,15 +15,18 @@ use tokio::{
 
 mod exit;
 mod node;
+mod pubsub;
 mod req_res;
 mod streams;
 mod watch;
 
 pub use exit::*;
 pub use node::*;
+pub use pubsub::PubSubError;
 pub use req_res::*;
 pub use streams::{SourceSet, Sources};
 
+use crate::pubsub::PubSub;
 use crate::watch::{NoWatch, OnErrTerminate, WatchFn};
 
 /// A thin abstraction over tokio tasks and flume channels, allowing for easy message passing
@@ -346,6 +349,8 @@ where
     restarts: u64,
     registry_key: Option<String>,
     registry: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
+    pubsub: Arc<RwLock<PubSub>>,
+    subscription_ids: Vec<(String, u64)>,
 }
 
 impl<P> Ctx<P>
@@ -530,7 +535,7 @@ where
     /// // ctx.actor::<Worker>(props).spawn_named("worker-1")?;
     ///
     /// // Any actor in the system can then send to it by name:
-    /// ctx.send_to::<WorkerMsg>("worker-1", WorkerMsg::Start)?;
+    /// ctx.send_to("worker-1", WorkerMsg::Start)?;
     /// ```
     pub fn send_to<Msg: Send + 'static>(
         &self,
@@ -699,6 +704,21 @@ where
         }
 
         Child::exit(actor_created, exit_reason, &mut ctx).await;
+
+        // Clean up pub/sub subscriptions (runs on both stop and restart)
+        if !ctx.subscription_ids.is_empty() {
+            if let Ok(mut bus) = ctx.pubsub.write() {
+                for (topic, sub_id) in ctx.subscription_ids.drain(..) {
+                    if let Some(entry) = bus.topics.get_mut(&topic) {
+                        entry.subscribers.retain(|s| s.id != sub_id);
+                        if entry.subscribers.is_empty() {
+                            bus.topics.remove(&topic);
+                        }
+                    }
+                }
+            }
+        }
+
         let _ = stop_ack_tx.map(|tx| tx.send(()));
 
         if let Restart::In(duration) = restart {
@@ -923,6 +943,8 @@ where
             tasks: JoinSet::new(),
             registry_key: self.registry_key,
             registry: self.ctx.registry.clone(),
+            pubsub: self.ctx.pubsub.clone(),
+            subscription_ids: Vec::new(),
         };
 
         spawn::<Child, W>(ctx, None, self.watch);
