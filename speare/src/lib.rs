@@ -694,7 +694,7 @@ where
 /// ```ignore
 /// let supervision = Supervision::Restart {
 ///     max: Limit::Amount(5),
-///     backoff: Backoff::Satic(Duration::from_secs(1)),
+///     backoff: Backoff::Static(Duration::from_secs(1)),
 /// };
 /// ```
 #[derive(Debug, Clone, Copy)]
@@ -722,7 +722,7 @@ pub enum Backoff {
     /// Restart immediately with no delay.
     None,
     /// Wait a fixed duration between restarts.
-    Satic(Duration),
+    Static(Duration),
     /// Linearly increase delay from `min` to `max` by `step` per restart.
     Incremental {
         min: Duration,
@@ -826,7 +826,7 @@ where
     /// ctx.actor::<Worker>(props)
     ///     .supervision(Supervision::Restart {
     ///         max: Limit::Amount(3),
-    ///         backoff: Backoff::Satic(Duration::from_secs(1)),
+    ///         backoff: Backoff::Static(Duration::from_secs(1)),
     ///     })
     ///     .spawn();
     /// ```
@@ -953,7 +953,7 @@ impl Restart {
             Supervision::Restart { backoff, .. } => {
                 let wait = match backoff {
                     Backoff::None => Duration::ZERO,
-                    Backoff::Satic(duration) => duration,
+                    Backoff::Static(duration) => duration,
                     Backoff::Incremental { min, max, step } => {
                         let wait = step.mul_f64((current_restarts + 1) as f64);
                         let wait = cmp::min(max, wait);
