@@ -119,6 +119,14 @@ ctx.stop_children().await;
 
 This stops every child actor the current actor has spawned and waits for each to fully terminate before returning.
 
+Similarly, you can restart all children at once:
+
+```rust,ignore
+ctx.restart_children();
+```
+
+This sends a restart signal to every child. Each child will re-run `exit()` then `init()`, resetting its state while keeping its `Handle` valid. Unlike `stop_children`, this is fire-and-forget -- it does not wait for the children to finish restarting. The restart bypasses each child's supervision strategy (it always restarts, regardless of `Supervision::Stop` or restart limits).
+
 ## Supervision Strategies
 
 When you spawn a child actor, you can configure what should happen if it returns an error. Set the strategy with `.supervision()` on the spawn builder:
@@ -294,3 +302,136 @@ impl Actor for Supervisor {
 ```
 
 After `Flaky` fails 3 times and exhausts its restart limit, the watch callback fires and sends `SupervisorMsg::WorkerDied` to the `Supervisor`. The parent can then decide what to do -- spawn a replacement, escalate, log the failure, or shut itself down.
+
+## Replicating BEAM Supervision Strategies
+
+If you are coming from Elixir or Erlang, you may be familiar with three supervisor strategies:
+
+- **one_for_one** -- if a child fails, only that child is restarted.
+- **one_for_all** -- if any child fails, all children are stopped and restarted.
+- **rest_for_one** -- if a foundational child fails, all children that depend on it are restarted too.
+
+In speare, supervision is configured per-child rather than per-supervisor. `Supervision::Restart` gives you `one_for_one` out of the box. The other two can be built by combining `.watch()` with `stop_children()` or `restart_children()`.
+
+### one_for_one
+
+This is speare's default behavior. Each child gets its own `Supervision::Restart`:
+
+```rust,ignore
+ctx.actor::<WorkerA>(())
+    .supervision(Supervision::Restart {
+        max: Limit::Amount(3),
+        backoff: Backoff::None,
+    })
+    .spawn();
+
+ctx.actor::<WorkerB>(())
+    .supervision(Supervision::Restart {
+        max: Limit::Amount(3),
+        backoff: Backoff::None,
+    })
+    .spawn();
+```
+
+If WorkerA fails, only WorkerA is restarted. WorkerB is unaffected.
+
+### one_for_all
+
+Use `.watch()` to detect when any child permanently fails, then stop all remaining children and re-spawn the entire group:
+
+```rust,ignore
+struct Supervisor;
+
+enum Msg {
+    ChildFailed,
+}
+
+impl Actor for Supervisor {
+    type Props = ();
+    type Msg = Msg;
+    type Err = ();
+
+    async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+        spawn_all(ctx);
+        Ok(Supervisor)
+    }
+
+    async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+        match msg {
+            Msg::ChildFailed => {
+                ctx.stop_children().await;
+                spawn_all(ctx);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn spawn_all(ctx: &mut Ctx<Supervisor>) {
+    ctx.actor::<WorkerA>(())
+        .watch(|_| Msg::ChildFailed)
+        .spawn();
+    ctx.actor::<WorkerB>(())
+        .watch(|_| Msg::ChildFailed)
+        .spawn();
+    ctx.actor::<WorkerC>(())
+        .watch(|_| Msg::ChildFailed)
+        .spawn();
+}
+```
+
+When any worker terminates for good, the supervisor stops all remaining children and re-spawns the entire group. The `stop_children` call does not trigger `.watch()` on the surviving children -- watch only fires on error termination -- so there are no spurious `ChildFailed` messages from the teardown.
+
+You can also give each child individual restart attempts before escalating to the group restart. Just add a supervision strategy alongside the watch:
+
+```rust,ignore
+ctx.actor::<WorkerA>(())
+    .supervision(Supervision::Restart {
+        max: Limit::Amount(3),
+        backoff: Backoff::None,
+    })
+    .watch(|_| Msg::ChildFailed)
+    .spawn();
+```
+
+Now WorkerA gets 3 restart attempts on its own. Only if it exhausts those does the watch fire and trigger the full group restart.
+
+### rest_for_one
+
+Watch the foundational actor that others depend on. If it dies, the children that depend on it need to restart too. Suppose WorkerB and WorkerC both depend on WorkerA:
+
+```rust,ignore
+enum Msg {
+    WorkerAFailed,
+}
+
+async fn init(ctx: &mut Ctx<Self>) -> Result<Self, Self::Err> {
+    ctx.actor::<WorkerA>(())
+        .watch(|_| Msg::WorkerAFailed)
+        .spawn();
+    ctx.actor::<WorkerB>(()).spawn();
+    ctx.actor::<WorkerC>(()).spawn();
+
+    Ok(Supervisor)
+}
+
+async fn handle(&mut self, msg: Self::Msg, ctx: &mut Ctx<Self>) -> Result<(), Self::Err> {
+    match msg {
+        Msg::WorkerAFailed => {
+            // Option 1: tear down everything and start fresh
+            ctx.stop_children().await;
+            // re-spawn A, B, C...
+
+            // Option 2: keep B and C's state, just reset their connections
+            ctx.restart_children(); // restarts the surviving B and C
+            // re-spawn A (since it's already dead)
+            ctx.actor::<WorkerA>(())
+                .watch(|_| Msg::WorkerAFailed)
+                .spawn();
+        }
+    }
+    Ok(())
+}
+```
+
+Option 1 is the clean slate -- stop everything and re-spawn in order. Option 2 preserves state on the surviving children by restarting them (re-running their `init` with the same props) while only re-spawning the dead actor.
