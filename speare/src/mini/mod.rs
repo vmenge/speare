@@ -17,6 +17,15 @@ use tokio::{
     time,
 };
 
+pub fn root() -> Ctx<()> {
+    Ctx {
+        args: (),
+        pubsub: Default::default(),
+        on_err: OnErr::Stop,
+        children: Default::default(),
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 pub struct TaskId(u64);
 
@@ -24,7 +33,13 @@ pub struct Ctx<Args = ()> {
     args: Args,
     pubsub: Arc<RwLock<PubSub>>,
     on_err: OnErr,
-    children: HashMap<TaskId, AbortHandle>,
+    children: Arc<RwLock<HashMap<TaskId, AbortHandle>>>,
+}
+
+impl<Args> Drop for Ctx<Args> {
+    fn drop(&mut self) {
+        let _ = self.abort_children();
+    }
 }
 
 impl<Args> Deref for Ctx<Args> {
@@ -37,14 +52,14 @@ impl<Args> Deref for Ctx<Args> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SpeareErr {
-    SubscribeTypeMismatch { topic: String },
+    TypeMismatch { topic: String },
     LockPoisonErr,
 }
 
 impl std::fmt::Display for SpeareErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SpeareErr::SubscribeTypeMismatch { topic } => {
+            SpeareErr::TypeMismatch { topic } => {
                 write!(f, "pub/sub topic type mismatch for topic: {topic}")
             }
 
@@ -63,7 +78,7 @@ where
 {
     /// Returns a flume::Receiver<T> to a topic.
     ///
-    /// Returns `PubSubError::TypeMismatch` if the topic was already created with
+    /// Returns `SpeareErr::TypeMismatch` if the topic was already created with
     /// a different message type.
     pub fn subscribe<T>(&self, topic: &str) -> Result<Receiver<T>>
     where
@@ -75,7 +90,7 @@ where
 
         if let Some(entry) = bus.topics.get(topic) {
             if entry.type_id != type_id {
-                return Err(SpeareErr::SubscribeTypeMismatch {
+                return Err(SpeareErr::TypeMismatch {
                     topic: topic.to_string(),
                 });
             }
@@ -113,7 +128,7 @@ where
     /// for each subscriber.
     ///
     /// Publishing to a topic with no subscribers is a no-op and returns `Ok(())`.
-    /// Returns `PubSubError::TypeMismatch` if the topic exists with a different type.
+    /// Returns `SpeareErr::TypeMismatch` if the topic exists with a different type.
     pub fn publish<T>(&self, topic: &str, msg: T) -> Result<()>
     where
         T: Clone + Send + 'static,
@@ -125,7 +140,7 @@ where
         };
 
         if entry.type_id != TypeId::of::<T>() {
-            return Err(SpeareErr::SubscribeTypeMismatch {
+            return Err(SpeareErr::TypeMismatch {
                 topic: topic.to_string(),
             });
         }
@@ -136,33 +151,11 @@ where
         Ok(())
     }
 
-    pub fn abort_child(&mut self, id: TaskId) -> bool {
-        match self.children.entry(id) {
-            Entry::Vacant(_) => false,
-            Entry::Occupied(child) => {
-                child.get().abort();
-                child.remove();
-                true
-            }
-        }
-    }
-
-    pub fn abort_children(&mut self) {
-        for child in self.children.values() {
-            child.abort();
-        }
-
-        self.children.clear();
-    }
-
-    pub fn task<'a>(&'a mut self) -> SpawnBuilder<'a, Args> {
+    pub fn task<'a>(&'a self) -> SpawnBuilder<'a, Args> {
         SpawnBuilder::new(self, ())
     }
 
-    pub fn task_with<'a, ChildArgs>(
-        &'a mut self,
-        args: ChildArgs,
-    ) -> SpawnBuilder<'a, Args, ChildArgs>
+    pub fn task_with<'a, ChildArgs>(&'a self, args: ChildArgs) -> SpawnBuilder<'a, Args, ChildArgs>
     where
         ChildArgs: Send + 'static,
     {
@@ -170,8 +163,43 @@ where
     }
 }
 
+impl<Args> Ctx<Args> {
+    pub fn abort_child(&self, id: TaskId) -> Result<bool> {
+        let mut children = self
+            .children
+            .write()
+            .map_err(|_| SpeareErr::LockPoisonErr)?;
+
+        let aborted = match children.entry(id) {
+            Entry::Vacant(_) => false,
+            Entry::Occupied(child) => {
+                child.get().abort();
+                child.remove();
+                true
+            }
+        };
+
+        Ok(aborted)
+    }
+
+    pub fn abort_children(&self) -> Result<()> {
+        let mut children = self
+            .children
+            .write()
+            .map_err(|_| SpeareErr::LockPoisonErr)?;
+
+        for child in children.values() {
+            child.abort();
+        }
+
+        children.clear();
+
+        Ok(())
+    }
+}
+
 pub struct SpawnBuilder<'a, ParentArgs, ChildArgs = ()> {
-    parent_ctx: &'a mut Ctx<ParentArgs>,
+    parent_ctx: &'a Ctx<ParentArgs>,
     child_args: ChildArgs,
     on_err: OnErr,
 }
@@ -181,7 +209,7 @@ where
     ParentArgs: Send + 'static,
     ChildArgs: Send + 'static,
 {
-    pub fn new(parent_ctx: &'a mut Ctx<ParentArgs>, child_args: ChildArgs) -> Self {
+    pub fn new(parent_ctx: &'a Ctx<ParentArgs>, child_args: ChildArgs) -> Self {
         Self {
             parent_ctx,
             child_args,
@@ -203,7 +231,7 @@ where
         }
     }
 
-    pub fn on_err<NewChildArgs>(mut self, on_err: OnErr) -> Self {
+    pub fn on_err(mut self, on_err: OnErr) -> Self {
         self.on_err = on_err;
         self
     }
@@ -211,8 +239,8 @@ where
     pub fn spawn<ChildErr, TaskFn, Fut>(self, taskfn: TaskFn) -> Result<()>
     where
         ChildErr: Send + 'static,
-        TaskFn: Send + 'static + for<'f> Fn(&'f mut Ctx<ChildArgs>) -> Fut,
-        Fut: Future<Output = Result<(), ChildErr>> + Send + 'static,
+        TaskFn: Send + 'static + Fn(&Ctx<ChildArgs>) -> Fut,
+        Fut: Future<Output = Result<(), ChildErr>> + Send,
     {
         self.inner_spawn(taskfn, false).map(|_| ())
     }
@@ -223,8 +251,8 @@ where
     ) -> Result<Receiver<(TaskId, ChildErr)>>
     where
         ChildErr: Send + 'static,
-        TaskFn: Send + 'static + for<'f> Fn(&'f mut Ctx<ChildArgs>) -> Fut,
-        Fut: Future<Output = Result<(), ChildErr>> + Send + 'static,
+        TaskFn: Send + 'static + Fn(&Ctx<ChildArgs>) -> Fut,
+        Fut: Future<Output = Result<(), ChildErr>> + Send,
     {
         self.inner_spawn(taskfn, true)
             .map(|receiver| receiver.unwrap())
@@ -236,12 +264,16 @@ where
         watch: bool,
     ) -> Result<Option<Receiver<(TaskId, ChildErr)>>>
     where
-        ChildArgs: Send + 'static,
+        ChildArgs: Send,
         ChildErr: Send + 'static,
-        TaskFn: Send + 'static + Fn(&mut Ctx<ChildArgs>) -> Fut,
-        Fut: Future<Output = Result<(), ChildErr>> + Send + 'static,
+        TaskFn: Send + 'static + Fn(&Ctx<ChildArgs>) -> Fut,
+        Fut: Future<Output = Result<(), ChildErr>> + Send,
     {
-        let children = &mut self.parent_ctx.children;
+        let mut children = self
+            .parent_ctx
+            .children
+            .write()
+            .map_err(|_| SpeareErr::LockPoisonErr)?;
 
         let next_id = children
             .keys()
@@ -266,42 +298,45 @@ where
 
         let mut restart_count = 0_u64;
 
+        let parent_children = self.parent_ctx.children.clone();
         let handle = task::spawn(async move {
-            let mut child_ctx = child_ctx;
+            let child_ctx = child_ctx;
             let mut err_tx = err_tx;
             let task_id = next_id;
 
-            loop {
-                if let Err(e) = taskfn(&mut child_ctx).await {
-                    if let Some(tx) = &err_tx {
-                        if tx.send((task_id, e)).is_err() {
-                            err_tx = None;
-                        }
+            while let Err(e) = taskfn(&child_ctx).await {
+                if let Some(tx) = &err_tx {
+                    if tx.send((task_id, e)).is_err() {
+                        err_tx = None;
                     }
-
-                    match child_ctx.on_err {
-                        OnErr::Stop => break,
-                        OnErr::Restart { max, backoff } => {
-                            if max == restart_count {
-                                break;
-                            }
-
-                            let wait = match backoff {
-                                Backoff::None => Duration::ZERO,
-                                Backoff::Static(duration) => duration,
-                                Backoff::Incremental { min, max, step } => {
-                                    let wait = step.mul_f64((restart_count + 1) as f64);
-                                    let wait = cmp::min(max, wait);
-                                    cmp::max(min, wait)
-                                }
-                            };
-
-                            time::sleep(wait).await;
-                        }
-                    };
                 }
 
+                match child_ctx.on_err {
+                    OnErr::Stop => break,
+                    OnErr::Restart { max, backoff } => {
+                        if max == restart_count {
+                            break;
+                        }
+
+                        let wait = match backoff {
+                            Backoff::None => Duration::ZERO,
+                            Backoff::Static(duration) => duration,
+                            Backoff::Incremental { min, max, step } => {
+                                let wait = step.mul_f64((restart_count + 1) as f64);
+                                let wait = cmp::min(max, wait);
+                                cmp::max(min, wait)
+                            }
+                        };
+
+                        time::sleep(wait).await;
+                    }
+                };
+
                 restart_count += 1;
+            }
+
+            if let Ok(mut children) = parent_children.write() {
+                children.remove(&task_id);
             }
         });
 
@@ -315,4 +350,12 @@ where
 pub enum OnErr {
     Stop,
     Restart { max: Limit, backoff: Backoff },
+}
+
+fn test() {
+    let root = root();
+    root.task().spawn(async |ctx| {
+        let x = 5;
+        Ok::<(), String>(())
+    });
 }
