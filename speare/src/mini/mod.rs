@@ -19,7 +19,7 @@ use tokio::{
 
 pub fn root() -> Ctx<()> {
     Ctx {
-        args: (),
+        args: Arc::new(()),
         pubsub: Default::default(),
         on_err: OnErr::Stop,
         children: Default::default(),
@@ -30,10 +30,21 @@ pub fn root() -> Ctx<()> {
 pub struct TaskId(u64);
 
 pub struct Ctx<Args = ()> {
-    args: Args,
+    args: Arc<Args>,
     pubsub: Arc<RwLock<PubSub>>,
     on_err: OnErr,
     children: Arc<RwLock<HashMap<TaskId, AbortHandle>>>,
+}
+
+impl<Args> Clone for Ctx<Args> {
+    fn clone(&self) -> Self {
+        Self {
+            args: self.args.clone(),
+            pubsub: self.pubsub.clone(),
+            on_err: self.on_err.clone(),
+            children: self.children.clone(),
+        }
+    }
 }
 
 impl<Args> Drop for Ctx<Args> {
@@ -151,15 +162,19 @@ where
         Ok(())
     }
 
-    pub fn task<'a>(&'a self) -> SpawnBuilder<'a, Args> {
+    pub fn task<ChildErr, TaskFn, Fut>(&self, taskfn: TaskFn) -> Result<()>
+    where
+        ChildErr: Send + 'static,
+        TaskFn: Send + 'static + Fn(Ctx<()>) -> Fut,
+        Fut: Future<Output = Result<(), ChildErr>> + Send,
+    {
         SpawnBuilder::new(self, ())
+            .inner_spawn(taskfn, false)
+            .map(|_| ())
     }
 
-    pub fn task_with<'a, ChildArgs>(&'a self, args: ChildArgs) -> SpawnBuilder<'a, Args, ChildArgs>
-    where
-        ChildArgs: Send + 'static,
-    {
-        SpawnBuilder::new(self, args)
+    pub fn task_with<'a>(&'a self) -> SpawnBuilder<'a, Args> {
+        SpawnBuilder::new(self, ())
     }
 }
 
@@ -207,7 +222,7 @@ pub struct SpawnBuilder<'a, ParentArgs, ChildArgs = ()> {
 impl<'a, ParentArgs, ChildArgs> SpawnBuilder<'a, ParentArgs, ChildArgs>
 where
     ParentArgs: Send + 'static,
-    ChildArgs: Send + 'static,
+    ChildArgs: Send + 'static + Sync,
 {
     pub fn new(parent_ctx: &'a Ctx<ParentArgs>, child_args: ChildArgs) -> Self {
         Self {
@@ -239,7 +254,7 @@ where
     pub fn spawn<ChildErr, TaskFn, Fut>(self, taskfn: TaskFn) -> Result<()>
     where
         ChildErr: Send + 'static,
-        TaskFn: Send + 'static + Fn(&Ctx<ChildArgs>) -> Fut,
+        TaskFn: Send + 'static + Fn(Ctx<ChildArgs>) -> Fut,
         Fut: Future<Output = Result<(), ChildErr>> + Send,
     {
         self.inner_spawn(taskfn, false).map(|_| ())
@@ -251,7 +266,7 @@ where
     ) -> Result<Receiver<(TaskId, ChildErr)>>
     where
         ChildErr: Send + 'static,
-        TaskFn: Send + 'static + Fn(&Ctx<ChildArgs>) -> Fut,
+        TaskFn: Send + 'static + Fn(Ctx<ChildArgs>) -> Fut,
         Fut: Future<Output = Result<(), ChildErr>> + Send,
     {
         self.inner_spawn(taskfn, true)
@@ -264,9 +279,9 @@ where
         watch: bool,
     ) -> Result<Option<Receiver<(TaskId, ChildErr)>>>
     where
-        ChildArgs: Send,
+        ChildArgs: Send + Sync,
         ChildErr: Send + 'static,
-        TaskFn: Send + 'static + Fn(&Ctx<ChildArgs>) -> Fut,
+        TaskFn: Send + 'static + Fn(Ctx<ChildArgs>) -> Fut,
         Fut: Future<Output = Result<(), ChildErr>> + Send,
     {
         let mut children = self
@@ -290,7 +305,7 @@ where
         };
 
         let child_ctx = Ctx {
-            args: self.child_args,
+            args: Arc::new(self.child_args),
             pubsub: self.parent_ctx.pubsub.clone(),
             on_err: self.on_err,
             children: Default::default(),
@@ -304,7 +319,7 @@ where
             let mut err_tx = err_tx;
             let task_id = next_id;
 
-            while let Err(e) = taskfn(&child_ctx).await {
+            while let Err(e) = taskfn(child_ctx.clone()).await {
                 if let Some(tx) = &err_tx {
                     if tx.send((task_id, e)).is_err() {
                         err_tx = None;
@@ -350,12 +365,4 @@ where
 pub enum OnErr {
     Stop,
     Restart { max: Limit, backoff: Backoff },
-}
-
-fn test() {
-    let root = root();
-    root.task().spawn(async |ctx| {
-        let x = 5;
-        Ok::<(), String>(())
-    });
 }
