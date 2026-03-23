@@ -30,6 +30,16 @@ impl<M: Send + 'static> Default for SourceSet<NoStream<M>> {
     }
 }
 
+impl<T, M> From<T> for SourceSet<T>
+where
+    T: Stream<Item = M>,
+    M: Send + 'static,
+{
+    fn from(value: T) -> Self {
+        SourceSet(value)
+    }
+}
+
 impl<S> SourceSet<S> {
     pub fn interval<F, M>(self, interval: Interval, f: F) -> SourceSet<Merge<S, IntervalStream<F>>>
     where

@@ -13,6 +13,8 @@ use tokio::{
     time,
 };
 
+pub mod mini;
+
 mod exit;
 mod node;
 mod pubsub;
@@ -764,7 +766,7 @@ pub enum Supervision {
 ///     step: Duration::from_millis(500),
 /// };
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Backoff {
     /// Restart immediately with no delay.
     None,
@@ -784,7 +786,7 @@ pub enum Backoff {
 /// ```ignore
 /// let limit = Limit::Amount(3);
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Limit {
     /// No limit on restarts.
     None,

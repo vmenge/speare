@@ -1,3 +1,4 @@
+use crate::{Actor, Ctx};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
@@ -45,14 +46,13 @@ impl std::fmt::Display for PubSubError {
             PubSubError::TypeMismatch { topic } => {
                 write!(f, "pub/sub topic type mismatch for topic: {topic}")
             }
+
             PubSubError::PoisonErr => write!(f, "pub/sub lock poisoned"),
         }
     }
 }
 
 impl std::error::Error for PubSubError {}
-
-use crate::{Actor, Ctx};
 
 impl<P: Actor> Ctx<P> {
     /// Subscribes this actor to a topic. Messages published to the topic will be
@@ -98,7 +98,10 @@ impl<P: Actor> Ctx<P> {
             }
         });
 
-        entry.subscribers.push(Subscriber { id: sub_id, send_fn });
+        entry.subscribers.push(Subscriber {
+            id: sub_id,
+            send_fn,
+        });
         self.subscription_ids.push((topic.to_string(), sub_id));
 
         Ok(())
@@ -109,11 +112,7 @@ impl<P: Actor> Ctx<P> {
     ///
     /// Publishing to a topic with no subscribers is a no-op and returns `Ok(())`.
     /// Returns `PubSubError::TypeMismatch` if the topic exists with a different type.
-    pub fn publish<T: Send + 'static>(
-        &self,
-        topic: &str,
-        msg: T,
-    ) -> Result<(), PubSubError> {
+    pub fn publish<T: Send + 'static>(&self, topic: &str, msg: T) -> Result<(), PubSubError> {
         let bus = self.pubsub.read().map_err(|_| PubSubError::PoisonErr)?;
 
         let Some(entry) = bus.topics.get(topic) else {
