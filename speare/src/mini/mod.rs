@@ -17,6 +17,10 @@ use tokio::{
     time,
 };
 
+/// Creates a root context for the Speare::mini runtime.
+///
+/// The root context starts with no args, no child tasks, and [`OnErr::Stop`]
+/// as its default error policy.
 pub fn root() -> Ctx<()> {
     Ctx {
         args: Arc::new(()),
@@ -29,6 +33,16 @@ pub fn root() -> Ctx<()> {
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
 pub struct TaskId(u64);
 
+/// Execution context for a mini task tree.
+///
+/// A `Ctx` carries:
+/// - the task's typed args
+/// - the shared pub/sub bus
+/// - the task's child-task registry
+/// - the error policy used when child tasks fail
+///
+/// Child tasks spawned from a context inherit its pub/sub bus and receive their
+/// own child registry.
 pub struct Ctx<Args = ()> {
     args: Arc<Args>,
     pubsub: Arc<RwLock<PubSub>>,
@@ -41,7 +55,7 @@ impl<Args> Clone for Ctx<Args> {
         Self {
             args: self.args.clone(),
             pubsub: self.pubsub.clone(),
-            on_err: self.on_err.clone(),
+            on_err: self.on_err,
             children: self.children.clone(),
         }
     }
@@ -87,10 +101,13 @@ impl<Args> Ctx<Args>
 where
     Args: Send + 'static,
 {
-    /// Returns a flume::Receiver<T> to a topic.
+    /// Subscribes to a topic and returns a typed receiver.
     ///
-    /// Returns `SpeareErr::TypeMismatch` if the topic was already created with
-    /// a different message type.
+    /// If the topic does not exist yet, it is created with `T` as its message
+    /// type.
+    ///
+    /// Returns [`SpeareErr::TypeMismatch`] if the topic already exists with a
+    /// different message type.
     pub fn subscribe<T>(&self, topic: &str) -> Result<Receiver<T>>
     where
         T: Clone + Send + 'static,
@@ -135,11 +152,14 @@ where
         Ok(msg_rx)
     }
 
-    /// Publishes a message to all subscribers of a topic. The message is cloned
-    /// for each subscriber.
+    /// Publishes a message to all subscribers of a topic.
     ///
-    /// Publishing to a topic with no subscribers is a no-op and returns `Ok(())`.
-    /// Returns `SpeareErr::TypeMismatch` if the topic exists with a different type.
+    /// The message is cloned once per live subscriber.
+    ///
+    /// Publishing to a topic with no subscribers is a no-op.
+    ///
+    /// Returns [`SpeareErr::TypeMismatch`] if the topic exists with a different
+    /// message type.
     pub fn publish<T>(&self, topic: &str, msg: T) -> Result<()>
     where
         T: Clone + Send + 'static,
@@ -162,6 +182,20 @@ where
         Ok(())
     }
 
+    /// Spawns a child task with no extra args.
+    ///
+    /// The task receives an owned [`Ctx<()>`], which lets callers use async
+    /// closures without boxing:
+    ///
+    /// ```ignore
+    /// root.task(async |ctx| {
+    ///     ctx.publish("events", "started")?;
+    ///     Ok::<(), MyErr>(())
+    /// })?;
+    /// ```
+    ///
+    /// The child inherits this context's pub/sub bus and uses the default
+    /// restart policy unless configured otherwise through [`SpawnBuilder`].
     pub fn task<ChildErr, TaskFn, Fut>(&self, taskfn: TaskFn) -> Result<()>
     where
         ChildErr: Send + 'static,
@@ -173,6 +207,8 @@ where
             .map(|_| ())
     }
 
+    /// Returns a builder for spawning a child task with explicit args and
+    /// supervision settings.
     pub fn task_with<'a>(&'a self) -> SpawnBuilder<'a, Args> {
         SpawnBuilder::new(self, ())
     }
@@ -213,6 +249,9 @@ impl<Args> Ctx<Args> {
     }
 }
 
+/// Builder for configuring and spawning a child task.
+///
+/// Use this when the child needs typed args or a non-default [`OnErr`] policy.
 pub struct SpawnBuilder<'a, ParentArgs, ChildArgs = ()> {
     parent_ctx: &'a Ctx<ParentArgs>,
     child_args: ChildArgs,
@@ -251,6 +290,10 @@ where
         self
     }
 
+    /// Spawns the child task.
+    ///
+    /// The task receives an owned child [`Ctx`]. If the task returns `Err`, the
+    /// builder's [`OnErr`] policy decides whether it stops or restarts.
     pub fn spawn<ChildErr, TaskFn, Fut>(self, taskfn: TaskFn) -> Result<()>
     where
         ChildErr: Send + 'static,
@@ -260,6 +303,10 @@ where
         self.inner_spawn(taskfn, false).map(|_| ())
     }
 
+    /// Spawns the child task and returns a receiver for reported task failures.
+    ///
+    /// Each time the task returns `Err`, the `(TaskId, error)` pair is sent on
+    /// the returned channel before the [`OnErr`] policy is applied.
     pub fn spawnwatch<ChildErr, TaskFn, Fut>(
         self,
         taskfn: TaskFn,
@@ -361,8 +408,12 @@ where
     }
 }
 
+/// Behavior to apply when a child task returns `Err`.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OnErr {
+    /// Stop the task after the first error.
     Stop,
+    /// Restart the task after an error, subject to the configured limits and
+    /// backoff policy.
     Restart { max: Limit, backoff: Backoff },
 }
