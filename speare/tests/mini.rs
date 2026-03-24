@@ -133,6 +133,49 @@ async fn task_runs_once_with_async_closure() {
 }
 
 #[tokio::test]
+async fn oneshot_runs_once_with_async_closure() {
+    // Arrange
+    let root = root();
+    let rx = root.subscribe::<String>("done").unwrap();
+    let payload = String::from("owned value");
+
+    // Act
+    root.oneshot(async move |ctx| {
+        ctx.publish("done", payload)?;
+        Ok::<(), SpeareErr>(())
+    })
+    .unwrap();
+
+    // Assert
+    assert_eq!(recv_within(&rx).await, "owned value");
+    assert_no_message(&rx).await;
+}
+
+#[tokio::test]
+async fn oneshot_stops_after_first_error() {
+    // Arrange
+    let root = root();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let (started_tx, started_rx) = flume::unbounded::<()>();
+
+    // Act
+    let attempts_cl = attempts.clone();
+    let started_tx_cl = started_tx.clone();
+    root.oneshot(async move |_ctx| {
+        attempts_cl.fetch_add(1, Ordering::SeqCst);
+        started_tx_cl.send(()).unwrap();
+        Err::<(), &'static str>("boom")
+    })
+    .unwrap();
+
+    recv_within(&started_rx).await;
+    sleep(QUIET_TIMEOUT).await;
+
+    // Assert
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn task_with_passes_args_into_child_ctx() {
     // Arrange
     let root = root();

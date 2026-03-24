@@ -212,6 +212,38 @@ where
     pub fn task_with<'a>(&'a self) -> SpawnBuilder<'a, Args> {
         SpawnBuilder::new(self, ())
     }
+
+    pub fn oneshot<ChildErr, TaskFn, Fut>(&self, taskfn: TaskFn) -> Result<()>
+    where
+        ChildErr: Send + 'static,
+        TaskFn: Send + 'static + FnOnce(Ctx<()>) -> Fut,
+        Fut: Future<Output = Result<(), ChildErr>> + Send,
+    {
+        let mut children = self
+            .children
+            .write()
+            .map_err(|_| SpeareErr::LockPoisonErr)?;
+
+        let child_ctx = Ctx {
+            args: Arc::new(()),
+            pubsub: self.pubsub.clone(),
+            on_err: OnErr::Stop,
+            children: Default::default(),
+        };
+
+        let handle = task::spawn(async move { taskfn(child_ctx).await });
+
+        let next_id = children
+            .keys()
+            .fold(0, |highest_id, curr_id| cmp::max(highest_id, curr_id.0))
+            + 1;
+
+        let next_id = TaskId(next_id);
+
+        children.insert(next_id, handle.abort_handle());
+
+        Ok(())
+    }
 }
 
 impl<Args> Ctx<Args> {
