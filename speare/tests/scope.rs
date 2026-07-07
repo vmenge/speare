@@ -1,214 +1,176 @@
 use speare::Error;
 use speare::prelude::*;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{
     sync::Notify,
     time::{Duration, timeout},
 };
 
+#[derive(Default)]
+struct Flag(AtomicBool);
+
+#[derive(Default)]
+struct Started(Notify);
+
+#[derive(Default)]
+struct Aborted(Notify);
+
+struct AbortGuard(Res<Aborted>);
+
+impl Drop for AbortGuard {
+    fn drop(&mut self) {
+        self.0.0.notify_one();
+    }
+}
+
 #[tokio::test]
 async fn spawned_child_runs_before_parent_completes() -> Result<(), Error> {
-    let ran = Arc::new(AtomicBool::new(false));
-    let child_ran = ran.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Flag::default()).build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let child_ran = child_ran.clone();
+    // Act
+    app.run(async |scope: Scope| {
+        scope.spawn(async |child_ran: Res<Flag>| {
+            child_ran.0.store(true, Ordering::SeqCst);
+        });
+    })
+    .await?;
 
-            async move {
-                scope.spawn(move || {
-                    let child_ran = child_ran.clone();
-
-                    async move {
-                        child_ran.store(true, Ordering::SeqCst);
-                    }
-                });
-            }
-        })
-        .await?;
-
-    assert!(ran.load(Ordering::SeqCst));
+    // Assert
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn child_observes_child_cancel() -> Result<(), Error> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let child_cancelled = cancelled.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Flag::default()).build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let child_cancelled = child_cancelled.clone();
+    // Act
+    app.run(async |scope: Scope| {
+        let child = scope.spawn(async |scope: Scope, child_cancelled: Res<Flag>| {
+            scope.cancelled().await;
+            child_cancelled.0.store(true, Ordering::SeqCst);
+        });
 
-            async move {
-                let child = scope.spawn(move |scope: Scope| {
-                    let child_cancelled = child_cancelled.clone();
+        child.cancel();
+    })
+    .await?;
 
-                    async move {
-                        scope.cancelled().await;
-                        child_cancelled.store(true, Ordering::SeqCst);
-                    }
-                });
-
-                child.cancel();
-            }
-        })
-        .await?;
-
-    assert!(cancelled.load(Ordering::SeqCst));
+    // Assert
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn child_observes_scope_cancel_all() -> Result<(), Error> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let child_cancelled = cancelled.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Flag::default()).build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let child_cancelled = child_cancelled.clone();
+    // Act
+    app.run(async |scope: Scope| {
+        scope.spawn(async |scope: Scope, child_cancelled: Res<Flag>| {
+            scope.cancelled().await;
+            child_cancelled.0.store(true, Ordering::SeqCst);
+        });
 
-            async move {
-                scope.spawn(move |scope: Scope| {
-                    let child_cancelled = child_cancelled.clone();
+        scope.cancel_all();
+    })
+    .await?;
 
-                    async move {
-                        scope.cancelled().await;
-                        child_cancelled.store(true, Ordering::SeqCst);
-                    }
-                });
-
-                scope.cancel_all();
-            }
-        })
-        .await?;
-
-    assert!(cancelled.load(Ordering::SeqCst));
+    // Assert
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn child_cancel_with_aborts_child_that_ignores_cancellation() -> Result<(), Error> {
-    let started = Arc::new(Notify::new());
-    let aborted = Arc::new(Notify::new());
-    let task_aborted = aborted.clone();
+    // Arrange
+    let app = App::builder()
+        .insert_resource(Started::default())
+        .insert_resource(Aborted::default())
+        .build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let started = started.clone();
-            let aborted = task_aborted.clone();
+    // Act
+    app.run(async |scope: Scope, started: Res<Started>| {
+        let child = scope.spawn(async |started: Res<Started>, aborted: Res<Aborted>| {
+            let _guard = AbortGuard(aborted);
+            started.0.notify_one();
+            std::future::pending::<()>().await;
+        });
 
-            async move {
-                let wait_started = started.clone();
+        started.0.notified().await;
+        child.cancel_with(Duration::from_millis(10)).await;
+    })
+    .await?;
 
-                let child = scope.spawn(move || {
-                    let started = started.clone();
-                    let aborted = aborted.clone();
+    // Assert
+    timeout(
+        Duration::from_secs(1),
+        app.get::<Aborted>().unwrap().0.notified(),
+    )
+    .await
+    .unwrap();
 
-                    async move {
-                        struct AbortGuard(Arc<Notify>);
-
-                        impl Drop for AbortGuard {
-                            fn drop(&mut self) {
-                                self.0.notify_one();
-                            }
-                        }
-
-                        let _guard = AbortGuard(aborted);
-                        started.notify_one();
-                        std::future::pending::<()>().await;
-                    }
-                });
-
-                wait_started.notified().await;
-                child.cancel_with(Duration::from_millis(10)).await;
-            }
-        })
-        .await?;
-
-    timeout(Duration::from_secs(1), aborted.notified())
-        .await
-        .unwrap();
     Ok(())
 }
 
 #[tokio::test]
 async fn parent_failure_cancels_child_before_abort() {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let child_cancelled = cancelled.clone();
-
-    let err = App::builder()
+    // Arrange
+    let app = App::builder()
         .cancel_timeout(Duration::from_secs(1))
-        .build()
-        .run(move |scope: Scope| {
-            let child_cancelled = child_cancelled.clone();
+        .insert_resource(Flag::default())
+        .build();
 
-            async move {
-                scope.spawn(move |scope: Scope| {
-                    let child_cancelled = child_cancelled.clone();
+    // Act
+    let err = app
+        .run(async |scope: Scope| -> Result<(), _> {
+            scope.spawn(async |scope: Scope, child_cancelled: Res<Flag>| {
+                scope.cancelled().await;
+                child_cancelled.0.store(true, Ordering::SeqCst);
+            });
 
-                    async move {
-                        scope.cancelled().await;
-                        child_cancelled.store(true, Ordering::SeqCst);
-                    }
-                });
-
-                Err::<(), _>(Error::source(std::io::Error::other("parent failed")))
-            }
+            Err("parent failed")
         })
         .await
         .unwrap_err();
 
+    // Assert
     assert_eq!(err.to_string(), "parent failed");
-    assert!(cancelled.load(Ordering::SeqCst));
+    assert!(app.get::<Flag>().unwrap().0.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
 async fn cancellation_cascades_to_nested_children() -> Result<(), Error> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let grandchild_cancelled = cancelled.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Flag::default()).build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let grandchild_cancelled = grandchild_cancelled.clone();
+    // Act
+    app.run(async |scope: Scope| {
+        let child = scope.spawn(async |scope: Scope| {
+            scope.spawn(async |scope: Scope, grandchild_cancelled: Res<Flag>| {
+                scope.cancelled().await;
+                grandchild_cancelled.0.store(true, Ordering::SeqCst);
+            });
 
-            async move {
-                let child = scope.spawn(move |scope: Scope| {
-                    let grandchild_cancelled = grandchild_cancelled.clone();
+            scope.cancelled().await;
+        });
 
-                    async move {
-                        scope.spawn(move |scope: Scope| {
-                            let grandchild_cancelled = grandchild_cancelled.clone();
+        child.cancel();
+    })
+    .await?;
 
-                            async move {
-                                scope.cancelled().await;
-                                grandchild_cancelled.store(true, Ordering::SeqCst);
-                            }
-                        });
-
-                        scope.cancelled().await;
-                    }
-                });
-
-                child.cancel();
-            }
-        })
-        .await?;
-
-    assert!(cancelled.load(Ordering::SeqCst));
+    // Assert
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn child_failure_does_not_fail_parent_scope() -> Result<(), Error> {
     App::new()
-        .run(|scope: Scope| async move {
-            scope.spawn(|| async {
-                Err::<(), _>(Error::source(std::io::Error::other("child failed")))
-            });
+        .run(async |scope: Scope| {
+            scope.spawn(async || -> Result<(), _> { Err("child failed") });
         })
         .await?;
 
@@ -217,64 +179,54 @@ async fn child_failure_does_not_fail_parent_scope() -> Result<(), Error> {
 
 #[tokio::test]
 async fn child_handle_can_watch_its_failure() -> Result<(), Error> {
-    let failure_seen = Arc::new(AtomicBool::new(false));
-    let child_failure_seen = failure_seen.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Flag::default()).build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let child_failure_seen = child_failure_seen.clone();
+    // Act
+    app.run(async |scope: Scope, child_failure_seen: Res<Flag>| {
+        let child = scope.spawn(async || -> Result<(), _> { Err("child failed") });
 
-            async move {
-                let child = scope.spawn(|| async {
-                    Err::<(), _>(Error::source(std::io::Error::other("child failed")))
-                });
+        let error = child.failed().await;
+        assert_eq!(error.to_string(), "child failed");
 
-                let error = child.failed().await;
-                assert_eq!(error.to_string(), "child failed");
-                child_failure_seen.store(true, Ordering::SeqCst);
-            }
-        })
-        .await?;
+        child_failure_seen.0.store(true, Ordering::SeqCst);
+    })
+    .await?;
 
-    assert!(failure_seen.load(Ordering::SeqCst));
+    // Assert
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn scope_can_watch_next_child_failure() -> Result<(), Error> {
-    let failure_seen = Arc::new(AtomicBool::new(false));
-    let scope_failure_seen = failure_seen.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Flag::default()).build();
 
-    App::new()
-        .run(move |scope: Scope| {
-            let scope_failure_seen = scope_failure_seen.clone();
+    // Act
+    app.run(async |scope: Scope, scope_failure_seen: Res<Flag>| {
+        scope.spawn(async || -> Result<(), _> { Err("child failed") });
 
-            async move {
-                scope.spawn(|| async {
-                    Err::<(), _>(Error::source(std::io::Error::other("child failed")))
-                });
+        let ChildFailure { error, .. } = scope.next_failure().await;
+        assert_eq!(error.to_string(), "child failed");
 
-                let ChildFailure { error, .. } = scope.next_failure().await;
-                assert_eq!(error.to_string(), "child failed");
-                scope_failure_seen.store(true, Ordering::SeqCst);
-            }
-        })
-        .await?;
+        scope_failure_seen.0.store(true, Ordering::SeqCst);
+    })
+    .await?;
 
-    assert!(failure_seen.load(Ordering::SeqCst));
+    // Assert
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn parent_can_explicitly_fail_from_child_failure() {
     let err = App::new()
-        .run(|scope: Scope| async move {
-            scope.spawn(|| async {
-                Err::<(), _>(Error::source(std::io::Error::other("child failed")))
-            });
+        .run(async |scope: Scope| -> Result<(), _> {
+            scope.spawn(async || -> Result<(), _> { Err("child failed") });
 
             let failure = scope.next_failure().await;
-            Err::<(), _>(failure.error)
+            Err(failure.error)
         })
         .await
         .unwrap_err();
@@ -284,88 +236,76 @@ async fn parent_can_explicitly_fail_from_child_failure() {
 
 #[tokio::test]
 async fn parent_failure_aborts_spawned_children() {
-    let started = Arc::new(Notify::new());
-    let aborted = Arc::new(Notify::new());
-    let child_started = started.clone();
-    let child_aborted = aborted.clone();
+    // Arrange
+    let app = App::builder()
+        .insert_resource(Started::default())
+        .insert_resource(Aborted::default())
+        .build();
 
-    let err = App::new()
-        .run(move |scope: Scope| {
-            let child_started = child_started.clone();
-            let child_aborted = child_aborted.clone();
-
-            async move {
-                let wait_started = child_started.clone();
-
-                let child = scope.spawn(move || {
-                    let child_started = child_started.clone();
-                    let child_aborted = child_aborted.clone();
-
-                    async move {
-                        struct AbortGuard(Arc<Notify>);
-
-                        impl Drop for AbortGuard {
-                            fn drop(&mut self) {
-                                self.0.notify_one();
-                            }
-                        }
-
+    // Act
+    let err = app
+        .run(
+            async |scope: Scope, child_started: Res<Started>| -> Result<(), _> {
+                let child = scope.spawn(
+                    async |child_aborted: Res<Aborted>, child_started: Res<Started>| {
                         let _guard = AbortGuard(child_aborted);
-                        child_started.notify_one();
-                        std::future::pending::<()>().await;
-                    }
-                });
+                        child_started.0.notify_one();
 
-                wait_started.notified().await;
+                        std::future::pending::<()>().await;
+                    },
+                );
+
+                child_started.0.notified().await;
                 child.abort();
-                Err::<(), _>(Error::source(std::io::Error::other("parent failed")))
-            }
-        })
+
+                Err("parent failed")
+            },
+        )
         .await
         .unwrap_err();
 
+    // Assert
     assert_eq!(err.to_string(), "parent failed");
-    timeout(Duration::from_secs(1), aborted.notified())
-        .await
-        .unwrap();
+    timeout(
+        Duration::from_secs(1),
+        app.get::<Aborted>().unwrap().0.notified(),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
 async fn retry_respawns_children() -> Result<(), Error> {
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let child_runs = Arc::new(AtomicUsize::new(0));
+    #[derive(Default)]
+    struct Attempts(AtomicUsize);
 
-    let task_attempts = attempts.clone();
-    let task_child_runs = child_runs.clone();
+    #[derive(Default)]
+    struct ChildRuns(AtomicUsize);
 
-    App::new()
-        .run(
-            (move |scope: Scope| {
-                let task_attempts = task_attempts.clone();
-                let task_child_runs = task_child_runs.clone();
+    // Arrange
+    let app = App::builder()
+        .insert_resource(Attempts::default())
+        .insert_resource(ChildRuns::default())
+        .build();
 
-                async move {
-                    scope.spawn(move || {
-                        let task_child_runs = task_child_runs.clone();
+    // Act
+    let task = async |scope: Scope, attempts: Res<Attempts>| {
+        scope.spawn(async |child_runs: Res<ChildRuns>| {
+            child_runs.0.fetch_add(1, Ordering::SeqCst);
+        });
 
-                        async move {
-                            task_child_runs.fetch_add(1, Ordering::SeqCst);
-                        }
-                    });
+        let attempt = attempts.0.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            return Err("retry");
+        }
 
-                    let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
-                    if attempt == 0 {
-                        Err::<(), _>(Error::source(std::io::Error::other("retry")))
-                    } else {
-                        Ok(())
-                    }
-                }
-            })
-            .retry(Retry::Max(1)),
-        )
-        .await?;
+        Ok(())
+    };
 
-    assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    assert_eq!(child_runs.load(Ordering::SeqCst), 2);
+    app.run(task.retry(Retry::Max(1))).await?;
+
+    // Assert
+    assert_eq!(app.get::<Attempts>()?.0.load(Ordering::SeqCst), 2);
+    assert_eq!(app.get::<ChildRuns>()?.0.load(Ordering::SeqCst), 2);
     Ok(())
 }
