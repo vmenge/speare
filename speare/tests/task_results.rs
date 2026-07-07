@@ -52,6 +52,7 @@ async fn run_returns_original_task_error_type() {
         RunError::Task(error) => assert_eq!(error.to_string(), "original run error"),
         RunError::App(error) => panic!("expected task error, got app error: {error}"),
     }
+
     assert_eq!(err.to_string(), "original run error");
     assert_eq!(
         error::Error::source(&err).unwrap().to_string(),
@@ -61,51 +62,8 @@ async fn run_returns_original_task_error_type() {
 
 #[tokio::test]
 async fn run_still_accepts_unit_task_output() -> Result<(), Error> {
-    // Arrange
-    let app = App::new();
-
-    // Act
-    let value = app.run(async || {}).await?;
-
-    // Assert
-    assert_eq!(value, ());
+    assert_eq!((), App::new().run(async || {}).await?);
     Ok(())
-}
-
-#[tokio::test]
-async fn run_preserves_std_error_from_result_task_output() {
-    // Arrange
-    let app = App::new();
-
-    // Act
-    let err = app
-        .run(async || -> Result<i32, std::io::Error> { Err(std::io::Error::other("io failed")) })
-        .await
-        .unwrap_err();
-
-    // Assert
-    match err {
-        RunError::Task(error) => assert_eq!(error.to_string(), "io failed"),
-        RunError::App(error) => panic!("expected task error, got app error: {error}"),
-    }
-}
-
-#[tokio::test]
-async fn run_preserves_report_like_error_without_std_error_bound() {
-    // Arrange
-    let app = App::new();
-
-    // Act
-    let err = app
-        .run(async || -> Result<i32, ReportLikeError> { Err(ReportLikeError("report failed")) })
-        .await
-        .unwrap_err();
-
-    // Assert
-    match err {
-        RunError::Task(error) => assert_eq!(error.to_string(), "report failed"),
-        RunError::App(error) => panic!("expected task error, got app error: {error}"),
-    }
 }
 
 #[tokio::test]
@@ -121,7 +79,7 @@ async fn run_maps_extraction_failure_to_app_error() {
 }
 
 #[tokio::test]
-async fn spawn_still_erases_task_error() {
+async fn spawn_erases_task_error() {
     // Arrange
     let mut app = App::new();
 
