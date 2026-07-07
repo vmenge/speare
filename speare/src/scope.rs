@@ -2,14 +2,15 @@ use crate::{
     error::{Error, Result, RunError},
     task::{IntoTask, StoredTask, TaskContext, TaskFuture, TaskParam},
 };
-use std::time::Duration;
 use std::{
     fmt,
+    mem,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
+use std::time::Duration;
 use tokio::{
     sync::{Notify, broadcast},
     task::{AbortHandle, JoinSet},
@@ -66,6 +67,17 @@ impl Scope {
         run_scoped_direct(&task, self.context.clone()).await
     }
 
+    /// Registers a deferred cleanup callback for the current task invocation.
+    pub fn defer<I, T>(&self, task: T) -> &Self
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+        T::Error: fmt::Display + fmt::Debug + Send + Sync + 'static,
+    {
+        self.context.scope().defer(StoredTask::from_task(task));
+        self
+    }
+
     /// Waits for the next child failure in this scope.
     ///
     /// This observes failures without consuming the child. The scope still waits
@@ -109,6 +121,7 @@ struct TaskScopeInner {
     tasks: Mutex<Option<JoinSet<ChildFinished>>>,
     failures: broadcast::Sender<ChildFailure>,
     cancellation: CancellationToken,
+    defers: Mutex<Vec<StoredTask>>,
 }
 
 impl Default for TaskScopeInner {
@@ -121,6 +134,7 @@ impl Default for TaskScopeInner {
             tasks: Mutex::new(Some(JoinSet::new())),
             failures,
             cancellation: CancellationToken::new(),
+            defers: Mutex::new(Vec::new()),
         }
     }
 }
@@ -251,6 +265,7 @@ impl TaskScope {
                 tasks: Mutex::new(Some(JoinSet::new())),
                 failures,
                 cancellation,
+                defers: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -261,6 +276,14 @@ impl TaskScope {
 
     async fn cancelled(&self) {
         self.inner.cancellation.cancelled().await
+    }
+
+    fn defer(&self, task: StoredTask) {
+        self.inner
+            .defers
+            .lock()
+            .expect("task scope is poisoned")
+            .push(task);
     }
 
     pub(crate) fn spawn(&self, task: StoredTask, context: TaskContext) -> Child {
@@ -506,6 +529,30 @@ impl TaskScope {
 
         Ok(())
     }
+
+    async fn run_defers(&self, context: TaskContext) -> Result<()> {
+        let defers = mem::take(
+            &mut *self
+                .inner
+                .defers
+                .lock()
+                .expect("task scope is poisoned"),
+        );
+        let mut first_error = None;
+
+        for defer in defers {
+            if let Err(error) = run_scoped_raw(defer, context.clone()).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
 }
 
 pub(crate) fn run_scoped(task: StoredTask, context: TaskContext) -> TaskFuture {
@@ -530,12 +577,20 @@ where
             .await
             .map_err(RunError::App)?;
 
-        let result = match result {
+        let scope_result = match result {
             Ok(value) => scope.join().await.map_err(RunError::App).map(|()| value),
             Err(error) => {
                 scope.cancel_with(context.cancel_timeout()).await;
                 Err(RunError::Task(error))
             }
+        };
+
+        let defer_result = scope.run_defers(scoped_context).await.map_err(RunError::App);
+
+        let result = match (scope_result, defer_result) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(value), Ok(())) => Ok(value),
         };
 
         match result {
@@ -563,12 +618,20 @@ fn run_scoped_raw(task: StoredTask, context: TaskContext) -> TaskFuture {
             let scoped_context = context.with_scope(scope.clone());
             let result = task.run(&scoped_context).await;
 
-            let result = match result {
+            let scope_result = match result {
                 Ok(()) => scope.join().await,
                 Err(error) => {
                     scope.cancel_with(context.cancel_timeout()).await;
                     Err(error)
                 }
+            };
+
+            let defer_result = scope.run_defers(scoped_context).await;
+
+            let result = match (scope_result, defer_result) {
+                (Err(error), _) => Err(error),
+                (Ok(()), Err(error)) => Err(error),
+                (Ok(()), Ok(())) => Ok(()),
             };
 
             match result {

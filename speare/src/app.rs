@@ -22,7 +22,6 @@ pub struct App {
 
 /// Builds an app by collecting setup-time resources, config, and plugins.
 pub struct AppBuilder {
-    defers: Vec<StoredTask>,
     resources: Resources,
     config: AppConfig,
 }
@@ -196,7 +195,6 @@ impl AppBuilder {
     /// Creates an empty app builder.
     pub fn new() -> Self {
         Self {
-            defers: Vec::new(),
             resources: Resources::default(),
             config: AppConfig::default(),
         }
@@ -207,7 +205,7 @@ impl AppBuilder {
     /// The builder is drained, so calling `build` again creates an empty app.
     pub fn build(&mut self) -> App {
         App {
-            defers: mem::take(&mut self.defers),
+            defers: Vec::new(),
             resources: mem::take(&mut self.resources),
             config: mem::take(&mut self.config),
             root: TaskScope::default(),
