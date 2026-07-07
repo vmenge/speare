@@ -1,8 +1,9 @@
-use speare::{App, Backoff, Error, Retry, TaskExt};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use speare::Error;
+use speare::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Default)]
+struct Attempts(AtomicUsize);
 
 #[test]
 fn retry_defaults_to_never() {
@@ -16,76 +17,67 @@ fn backoff_defaults_to_none() {
 
 #[tokio::test]
 async fn never_retries_failed_task() {
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let task_attempts = attempts.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Attempts::default()).build();
+    let inc_attempts = async |attempts: Res<Attempts>| -> Result<(), _> {
+        attempts.0.fetch_add(1, Ordering::SeqCst);
 
-    let err = App::new()
-        .run(
-            (move || {
-                let task_attempts = task_attempts.clone();
+        Err(Error::Report {
+            message: "failed".into(),
+        })
+    };
 
-                async move {
-                    task_attempts.fetch_add(1, Ordering::SeqCst);
-                    Err::<(), _>(Error::source(std::io::Error::other("failed")))
-                }
-            })
-            .retry(Retry::Never),
-        )
-        .await
-        .unwrap_err();
+    // Act
+    let err = app.run(inc_attempts.retry(Retry::Never)).await.unwrap_err();
 
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    // Assert
+    assert_eq!(app.get::<Attempts>().unwrap().0.load(Ordering::SeqCst), 1);
     assert_eq!(err.to_string(), "failed");
 }
 
 #[tokio::test]
 async fn max_retries_failed_task() {
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let task_attempts = attempts.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Attempts::default()).build();
+    let inc_attempts = async |attempts: Res<Attempts>| -> Result<(), _> {
+        attempts.0.fetch_add(1, Ordering::SeqCst);
 
+        Err(Error::Report {
+            message: "failed".into(),
+        })
+    };
+
+    // Act
     let err = App::new()
-        .run(
-            (move || {
-                let task_attempts = task_attempts.clone();
-
-                async move {
-                    task_attempts.fetch_add(1, Ordering::SeqCst);
-                    Err::<(), _>(Error::source(std::io::Error::other("failed")))
-                }
-            })
-            .retry(Retry::Max(2)),
-        )
+        .run(inc_attempts.retry(Retry::Max(2)))
         .await
         .unwrap_err();
 
-    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    // Assert
+    assert_eq!(app.get::<Attempts>().unwrap().0.load(Ordering::SeqCst), 3);
     assert_eq!(err.to_string(), "failed");
 }
 
 #[tokio::test]
 async fn always_retries_until_success() -> Result<(), Error> {
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let task_attempts = attempts.clone();
+    // Arrange
+    let app = App::builder().insert_resource(Attempts::default()).build();
+    let inc_attempts = async |attempts: Res<Attempts>| -> Result<(), _> {
+        let attempt = attempts.0.fetch_add(1, Ordering::SeqCst);
 
-    App::new()
-        .run(
-            (move || {
-                let task_attempts = task_attempts.clone();
+        if attempt < 2 {
+            return Err(Error::Report {
+                message: "failed".into(),
+            });
+        }
 
-                async move {
-                    let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    };
 
-                    if attempt < 2 {
-                        Err::<(), _>(Error::source(std::io::Error::other("failed")))
-                    } else {
-                        Ok(())
-                    }
-                }
-            })
-            .retry(Retry::Always),
-        )
-        .await?;
+    // Act
+    App::new().run(inc_attempts.retry(Retry::Always)).await?;
 
-    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    // Assert
+    assert_eq!(app.get::<Attempts>().unwrap().0.load(Ordering::SeqCst), 3);
     Ok(())
 }
