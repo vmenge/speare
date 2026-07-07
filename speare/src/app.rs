@@ -11,9 +11,11 @@ use tokio_util::sync::CancellationToken;
 ///
 /// `App` is configured during startup. Calling `start`, `spawn`, or `run`
 /// executes tasks against a cloned snapshot of the app's current resources and
-/// tasks.
+/// tasks. Deferred cleanup callbacks registered with `defer` run when `join`
+/// resolves the current root task lifecycle.
 pub struct App {
     tasks: HashMap<Schedule, Vec<StoredTask>>,
+    defers: Vec<StoredTask>,
     resources: Resources,
     config: AppConfig,
     root: TaskScope,
@@ -23,6 +25,7 @@ pub struct App {
 /// Builds an app by collecting setup-time resources, config, and plugins.
 pub struct AppBuilder {
     tasks: HashMap<Schedule, Vec<StoredTask>>,
+    defers: Vec<StoredTask>,
     resources: Resources,
     config: AppConfig,
 }
@@ -126,9 +129,15 @@ impl App {
 
     /// Waits for all currently spawned root tasks to complete.
     pub async fn join(&mut self) -> Result<()> {
-        let result = self.root.join_propagating(self.config.cancel_timeout).await;
+        let root_result = self.root.join_propagating(self.config.cancel_timeout).await;
+        let defer_result = self.run_defers().await;
         self.reset_lifecycle();
-        result
+
+        match (root_result, defer_result) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 
     /// Requests app-wide cancellation without waiting for tasks to finish.
@@ -140,6 +149,35 @@ impl App {
     fn reset_lifecycle(&mut self) {
         self.root = TaskScope::default();
         self.shutdown = CancellationToken::new();
+    }
+
+    async fn run_defers(&mut self) -> Result<()> {
+        let defers = mem::take(&mut self.defers);
+        let context = TaskContext::root(
+            self.resources.clone(),
+            self.config.cancel_timeout,
+            self.shutdown.clone(),
+        );
+        let mut first_error = None;
+
+        for defer in defers {
+            if let Err(error) = run_scoped(defer, context.clone()).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    /// Registers a deferred cleanup callback for the current root lifecycle.
+    pub fn defer<I>(&mut self, task: impl IntoTask<I>) -> &mut Self {
+        self.defers.push(task.into_task());
+        self
     }
 
     /// Starts the app and waits for it to finish.
@@ -225,6 +263,7 @@ impl AppBuilder {
     pub fn new() -> Self {
         Self {
             tasks: HashMap::new(),
+            defers: Vec::new(),
             resources: Resources::default(),
             config: AppConfig::default(),
         }
@@ -236,6 +275,7 @@ impl AppBuilder {
     pub fn build(&mut self) -> App {
         App {
             tasks: mem::take(&mut self.tasks),
+            defers: mem::take(&mut self.defers),
             resources: mem::take(&mut self.resources),
             config: mem::take(&mut self.config),
             root: TaskScope::default(),
@@ -255,6 +295,12 @@ impl AppBuilder {
     /// Sets how long parent failure waits for child cancellation before aborting children.
     pub fn cancel_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.config.cancel_timeout = timeout;
+        self
+    }
+
+    /// Registers a deferred cleanup callback for the built app's first root lifecycle.
+    pub fn defer<I>(&mut self, task: impl IntoTask<I>) -> &mut Self {
+        self.defers.push(task.into_task());
         self
     }
 
