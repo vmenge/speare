@@ -13,8 +13,8 @@ async fn normal_completion_runs_shutdown() -> Result<()> {
     let shutdown_ran = Arc::new(AtomicBool::new(false));
 
     App::new()
-        .add_system(Schedule::Work, || async {})
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Work, || async {})
+        .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
 
             move || {
@@ -37,10 +37,10 @@ async fn task_can_request_shutdown() -> Result<()> {
     let shutdown_ran = Arc::new(AtomicBool::new(false));
 
     App::new()
-        .add_system(Schedule::Work, |shutdown: Shutdown| async move {
+        .add_task(Schedule::Work, |shutdown: Shutdown| async move {
             shutdown.now();
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
 
             move || {
@@ -65,7 +65,7 @@ async fn shutdown_cancels_running_tasks() -> Result<()> {
 
     App::new()
         .cancel_timeout(Duration::from_secs(1))
-        .add_system(Schedule::Work, {
+        .add_task(Schedule::Work, {
             let started = started.clone();
 
             move |shutdown: Shutdown| {
@@ -77,7 +77,7 @@ async fn shutdown_cancels_running_tasks() -> Result<()> {
                 }
             }
         })
-        .add_system(Schedule::Work, {
+        .add_task(Schedule::Work, {
             let cancelled = cancelled.clone();
             let started = started.clone();
 
@@ -103,14 +103,14 @@ async fn shutdown_cancels_running_tasks() -> Result<()> {
 async fn shutdown_aborts_task_after_cancel_timeout() -> Result<()> {
     let started = Arc::new(Notify::new());
     let aborted = Arc::new(Notify::new());
-    let system_started = started.clone();
-    let system_aborted = aborted.clone();
+    let task_started = started.clone();
+    let task_aborted = aborted.clone();
 
     App::new()
         .cancel_timeout(Duration::from_millis(10))
-        .add_system(Schedule::Work, move || {
-            let started = system_started.clone();
-            let aborted = system_aborted.clone();
+        .add_task(Schedule::Work, move || {
+            let started = task_started.clone();
+            let aborted = task_aborted.clone();
 
             async move {
                 struct AbortGuard(Arc<Notify>);
@@ -126,7 +126,7 @@ async fn shutdown_aborts_task_after_cancel_timeout() -> Result<()> {
                 std::future::pending::<()>().await;
             }
         })
-        .add_system(Schedule::Work, {
+        .add_task(Schedule::Work, {
             let started = started.clone();
 
             move |shutdown: Shutdown| {
@@ -149,13 +149,13 @@ async fn shutdown_aborts_task_after_cancel_timeout() -> Result<()> {
 }
 
 #[tokio::test]
-async fn all_shutdown_systems_run() -> Result<()> {
+async fn all_shutdown_tasks_run() -> Result<()> {
     let first = Arc::new(AtomicBool::new(false));
     let second = Arc::new(AtomicBool::new(false));
     let third = Arc::new(AtomicBool::new(false));
 
     App::new()
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let first = first.clone();
 
             move || {
@@ -166,7 +166,7 @@ async fn all_shutdown_systems_run() -> Result<()> {
                 }
             }
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let second = second.clone();
 
             move || {
@@ -177,7 +177,7 @@ async fn all_shutdown_systems_run() -> Result<()> {
                 }
             }
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let third = third.clone();
 
             move || {
@@ -198,14 +198,14 @@ async fn all_shutdown_systems_run() -> Result<()> {
 }
 
 #[tokio::test]
-async fn all_shutdown_systems_run_even_if_one_fails() {
+async fn all_shutdown_tasks_run_even_if_one_fails() {
     let later_ran = Arc::new(AtomicBool::new(false));
 
     let err = App::new()
-        .add_system(Schedule::Shutdown, || async {
+        .add_task(Schedule::Shutdown, || async {
             Err(Error::source(std::io::Error::other("cleanup failed")))
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let later_ran = later_ran.clone();
 
             move || {
@@ -229,10 +229,10 @@ async fn start_failure_still_runs_shutdown() {
     let shutdown_ran = Arc::new(AtomicBool::new(false));
 
     let err = App::new()
-        .add_system(Schedule::Start, || async {
+        .add_task(Schedule::Start, || async {
             Err(Error::source(std::io::Error::other("start failed")))
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
 
             move || {
@@ -254,10 +254,10 @@ async fn start_failure_still_runs_shutdown() {
 #[tokio::test]
 async fn start_failure_error_wins_over_shutdown_error() {
     let err = App::new()
-        .add_system(Schedule::Start, || async {
+        .add_task(Schedule::Start, || async {
             Err(Error::source(std::io::Error::other("start failed")))
         })
-        .add_system(Schedule::Shutdown, || async {
+        .add_task(Schedule::Shutdown, || async {
             Err(Error::source(std::io::Error::other("shutdown failed")))
         })
         .start()
@@ -272,10 +272,10 @@ async fn task_failure_still_runs_shutdown() {
     let shutdown_ran = Arc::new(AtomicBool::new(false));
 
     let err = App::new()
-        .add_system(Schedule::Work, || async {
+        .add_task(Schedule::Work, || async {
             Err(Error::source(std::io::Error::other("task failed")))
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
 
             move || {
@@ -297,10 +297,10 @@ async fn task_failure_still_runs_shutdown() {
 #[tokio::test]
 async fn task_failure_error_wins_over_shutdown_error() {
     let err = App::new()
-        .add_system(Schedule::Work, || async {
+        .add_task(Schedule::Work, || async {
             Err(Error::source(std::io::Error::other("task failed")))
         })
-        .add_system(Schedule::Shutdown, || async {
+        .add_task(Schedule::Shutdown, || async {
             Err(Error::source(std::io::Error::other("shutdown failed")))
         })
         .start()
@@ -317,10 +317,10 @@ async fn shutdown_requested_during_start_skips_remaining_start_and_task() -> Res
     let shutdown_ran = Arc::new(AtomicBool::new(false));
 
     App::new()
-        .add_system(Schedule::Start, |shutdown: Shutdown| async move {
+        .add_task(Schedule::Start, |shutdown: Shutdown| async move {
             shutdown.now();
         })
-        .add_system(Schedule::Start, {
+        .add_task(Schedule::Start, {
             let later_start_ran = later_start_ran.clone();
 
             move || {
@@ -331,7 +331,7 @@ async fn shutdown_requested_during_start_skips_remaining_start_and_task() -> Res
                 }
             }
         })
-        .add_system(Schedule::Work, {
+        .add_task(Schedule::Work, {
             let task_ran = task_ran.clone();
 
             move || {
@@ -342,7 +342,7 @@ async fn shutdown_requested_during_start_skips_remaining_start_and_task() -> Res
                 }
             }
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
 
             move || {
@@ -367,10 +367,10 @@ async fn shutdown_during_shutdown_is_no_op() -> Result<()> {
     let later_shutdown_ran = Arc::new(AtomicBool::new(false));
 
     App::new()
-        .add_system(Schedule::Shutdown, |shutdown: Shutdown| async move {
+        .add_task(Schedule::Shutdown, |shutdown: Shutdown| async move {
             shutdown.now();
         })
-        .add_system(Schedule::Shutdown, {
+        .add_task(Schedule::Shutdown, {
             let later_shutdown_ran = later_shutdown_ran.clone();
 
             move || {
@@ -389,12 +389,12 @@ async fn shutdown_during_shutdown_is_no_op() -> Result<()> {
 }
 
 #[tokio::test]
-async fn shutdown_systems_are_not_scope_cancelled_by_app_shutdown() -> Result<()> {
+async fn shutdown_tasks_are_not_scope_cancelled_by_app_shutdown() -> Result<()> {
     App::new()
-        .add_system(Schedule::Work, |shutdown: Shutdown| async move {
+        .add_task(Schedule::Work, |shutdown: Shutdown| async move {
             shutdown.now();
         })
-        .add_system(Schedule::Shutdown, |scope: Scope| async move {
+        .add_task(Schedule::Shutdown, |scope: Scope| async move {
             assert!(!scope.is_cancelled());
         })
         .start()
@@ -402,18 +402,18 @@ async fn shutdown_systems_are_not_scope_cancelled_by_app_shutdown() -> Result<()
 }
 
 #[tokio::test]
-async fn shutdown_systems_respect_retry() -> Result<()> {
+async fn shutdown_tasks_respect_retry() -> Result<()> {
     let attempts = Arc::new(AtomicUsize::new(0));
-    let system_attempts = attempts.clone();
+    let task_attempts = attempts.clone();
 
     App::new()
-        .add_system(
+        .add_task(
             Schedule::Shutdown,
             (move || {
-                let system_attempts = system_attempts.clone();
+                let task_attempts = task_attempts.clone();
 
                 async move {
-                    let attempt = system_attempts.fetch_add(1, Ordering::SeqCst);
+                    let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
 
                     if attempt == 0 {
                         Err(Error::source(std::io::Error::other("retry shutdown")))

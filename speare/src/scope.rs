@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    system::{IntoSystem, StoredSystem, SystemContext, SystemFuture, SystemParam},
+    task::{IntoTask, StoredTask, TaskContext, TaskFuture, TaskParam},
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -13,44 +13,44 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// Scope for the currently running system.
+/// Scope for the currently running task.
 ///
-/// `Scope` can spawn child systems. Spawned children are scoped to the current
-/// system invocation: the current system is not considered complete until all
+/// `Scope` can spawn child tasks. Spawned children are scoped to the current
+/// task invocation: the current task is not considered complete until all
 /// children complete.
 #[derive(Clone)]
 pub struct Scope {
-    context: SystemContext,
+    context: TaskContext,
 }
 
 impl Scope {
-    /// Returns whether this system has been cancelled.
+    /// Returns whether this task has been cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.context.scope().is_cancelled()
     }
 
-    /// Waits until this system is cancelled.
+    /// Waits until this task is cancelled.
     pub async fn cancelled(&self) {
         self.context.scope().cancelled().await
     }
 
-    /// Spawns a child system in the current system scope.
+    /// Spawns a child task in the current task scope.
     ///
     /// The child runs concurrently. This method returns immediately, but the
-    /// current system invocation will wait for the child before completing.
+    /// current task invocation will wait for the child before completing.
     ///
-    /// If the current system fails, all children are aborted. Child failures
+    /// If the current task fails, all children are aborted. Child failures
     /// can be observed with `Child::failed` or `Scope::next_failure`.
-    pub fn spawn<I>(&self, system: impl IntoSystem<I>) -> Child {
+    pub fn spawn<I>(&self, task: impl IntoTask<I>) -> Child {
         self.context
             .scope()
-            .spawn(system.into_system(), self.context.clone())
+            .spawn(task.into_task(), self.context.clone())
     }
 
     /// Waits for the next child failure in this scope.
     ///
     /// This observes failures without consuming the child. The scope still waits
-    /// for all children before the current system is considered complete.
+    /// for all children before the current task is considered complete.
     pub async fn next_failure(&self) -> ChildFailure {
         self.context.scope().next_failure().await
     }
@@ -71,8 +71,8 @@ impl Scope {
     }
 }
 
-impl SystemParam for Scope {
-    fn extract(context: &SystemContext) -> Result<Self> {
+impl TaskParam for Scope {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Ok(Self {
             context: context.clone(),
         })
@@ -106,11 +106,11 @@ impl Default for TaskScopeInner {
     }
 }
 
-/// Opaque identifier for a child system spawned from a `Scope`.
+/// Opaque identifier for a child task spawned from a `Scope`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChildId(usize);
 
-/// Failure emitted by a child system.
+/// Failure emitted by a child task.
 #[derive(Debug, Clone)]
 pub struct ChildFailure {
     /// The child that failed.
@@ -119,7 +119,7 @@ pub struct ChildFailure {
     pub error: Error,
 }
 
-/// Handle to a child system spawned from a `Scope`.
+/// Handle to a child task spawned from a `Scope`.
 #[derive(Clone)]
 pub struct Child {
     id: ChildId,
@@ -247,18 +247,18 @@ impl TaskScope {
         self.inner.cancellation.cancelled().await
     }
 
-    pub(crate) fn spawn(&self, system: StoredSystem, context: SystemContext) -> Child {
-        self.spawn_with(system, context, false)
+    pub(crate) fn spawn(&self, task: StoredTask, context: TaskContext) -> Child {
+        self.spawn_with(task, context, false)
     }
 
-    pub(crate) fn spawn_propagating(&self, system: StoredSystem, context: SystemContext) -> Child {
-        self.spawn_with(system, context, true)
+    pub(crate) fn spawn_propagating(&self, task: StoredTask, context: TaskContext) -> Child {
+        self.spawn_with(task, context, true)
     }
 
     fn spawn_with(
         &self,
-        system: StoredSystem,
-        context: SystemContext,
+        task: StoredTask,
+        context: TaskContext,
         propagates_failure: bool,
     ) -> Child {
         let id = ChildId(self.inner.next_id.fetch_add(1, Ordering::SeqCst));
@@ -277,7 +277,7 @@ impl TaskScope {
             .as_mut()
             .expect("task scope is already joining")
             .spawn(async move {
-                let result = run_scoped_raw(system, child_context).await;
+                let result = run_scoped_raw(task, child_context).await;
 
                 if let Err(error) = &result {
                     let failure = ChildFailure {
@@ -404,19 +404,19 @@ impl TaskScope {
     }
 }
 
-pub(crate) fn run_scoped(system: StoredSystem, context: SystemContext) -> SystemFuture {
-    run_scoped_raw(system, context)
+pub(crate) fn run_scoped(task: StoredTask, context: TaskContext) -> TaskFuture {
+    run_scoped_raw(task, context)
 }
 
-fn run_scoped_raw(system: StoredSystem, context: SystemContext) -> SystemFuture {
+fn run_scoped_raw(task: StoredTask, context: TaskContext) -> TaskFuture {
     Box::pin(async move {
-        let policy = system.policy();
+        let policy = task.policy();
         let mut retries = 0;
 
         loop {
             let scope = context.scope().child();
             let scoped_context = context.with_scope(scope.clone());
-            let result = system.run(&scoped_context).await;
+            let result = task.run(&scoped_context).await;
 
             let result = match result {
                 Ok(()) => scope.join().await,

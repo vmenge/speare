@@ -14,7 +14,7 @@ async fn spawned_child_runs_before_parent_completes() -> Result<()> {
     let child_ran = ran.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let child_ran = child_ran.clone();
 
             async move {
@@ -40,7 +40,7 @@ async fn child_observes_child_cancel() -> Result<()> {
     let child_cancelled = cancelled.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let child_cancelled = child_cancelled.clone();
 
             async move {
@@ -69,7 +69,7 @@ async fn child_observes_scope_cancel_all() -> Result<()> {
     let child_cancelled = cancelled.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let child_cancelled = child_cancelled.clone();
 
             async move {
@@ -96,12 +96,12 @@ async fn child_observes_scope_cancel_all() -> Result<()> {
 async fn child_cancel_with_aborts_child_that_ignores_cancellation() -> Result<()> {
     let started = Arc::new(Notify::new());
     let aborted = Arc::new(Notify::new());
-    let system_aborted = aborted.clone();
+    let task_aborted = aborted.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let started = started.clone();
-            let aborted = system_aborted.clone();
+            let aborted = task_aborted.clone();
 
             async move {
                 let wait_started = started.clone();
@@ -145,7 +145,7 @@ async fn parent_failure_cancels_child_before_abort() {
 
     let err = App::new()
         .cancel_timeout(Duration::from_secs(1))
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let child_cancelled = child_cancelled.clone();
 
             async move {
@@ -175,7 +175,7 @@ async fn cancellation_cascades_to_nested_children() -> Result<()> {
     let grandchild_cancelled = cancelled.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let grandchild_cancelled = grandchild_cancelled.clone();
 
             async move {
@@ -209,7 +209,7 @@ async fn cancellation_cascades_to_nested_children() -> Result<()> {
 #[tokio::test]
 async fn child_failure_does_not_fail_parent_scope() -> Result<()> {
     App::new()
-        .add_system(Schedule::Start, |scope: Scope| async move {
+        .add_task(Schedule::Start, |scope: Scope| async move {
             scope.spawn(|| async { Err(Error::source(std::io::Error::other("child failed"))) });
         })
         .start()
@@ -224,7 +224,7 @@ async fn child_handle_can_watch_its_failure() -> Result<()> {
     let child_failure_seen = failure_seen.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let child_failure_seen = child_failure_seen.clone();
 
             async move {
@@ -249,7 +249,7 @@ async fn scope_can_watch_next_child_failure() -> Result<()> {
     let scope_failure_seen = failure_seen.clone();
 
     App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let scope_failure_seen = scope_failure_seen.clone();
 
             async move {
@@ -270,7 +270,7 @@ async fn scope_can_watch_next_child_failure() -> Result<()> {
 #[tokio::test]
 async fn parent_can_explicitly_fail_from_child_failure() {
     let err = App::new()
-        .add_system(Schedule::Start, |scope: Scope| async move {
+        .add_task(Schedule::Start, |scope: Scope| async move {
             scope.spawn(|| async { Err(Error::source(std::io::Error::other("child failed"))) });
 
             let failure = scope.next_failure().await;
@@ -291,7 +291,7 @@ async fn parent_failure_aborts_spawned_children() {
     let child_aborted = aborted.clone();
 
     let err = App::new()
-        .add_system(Schedule::Start, move |scope: Scope| {
+        .add_task(Schedule::Start, move |scope: Scope| {
             let child_started = child_started.clone();
             let child_aborted = child_aborted.clone();
 
@@ -337,26 +337,26 @@ async fn retry_respawns_children() -> Result<()> {
     let attempts = Arc::new(AtomicUsize::new(0));
     let child_runs = Arc::new(AtomicUsize::new(0));
 
-    let system_attempts = attempts.clone();
-    let system_child_runs = child_runs.clone();
+    let task_attempts = attempts.clone();
+    let task_child_runs = child_runs.clone();
 
     App::new()
-        .add_system(
+        .add_task(
             Schedule::Start,
             (move |scope: Scope| {
-                let system_attempts = system_attempts.clone();
-                let system_child_runs = system_child_runs.clone();
+                let task_attempts = task_attempts.clone();
+                let task_child_runs = task_child_runs.clone();
 
                 async move {
                     scope.spawn(move || {
-                        let system_child_runs = system_child_runs.clone();
+                        let task_child_runs = task_child_runs.clone();
 
                         async move {
-                            system_child_runs.fetch_add(1, Ordering::SeqCst);
+                            task_child_runs.fetch_add(1, Ordering::SeqCst);
                         }
                     });
 
-                    let attempt = system_attempts.fetch_add(1, Ordering::SeqCst);
+                    let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
                     if attempt == 0 {
                         Err(Error::source(std::io::Error::other("retry")))
                     } else {

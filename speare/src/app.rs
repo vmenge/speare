@@ -4,18 +4,18 @@ use crate::{
     query::Queries,
     resource::{Res, Resources},
     scope::{TaskScope, run_scoped},
-    system::{IntoSystem, StoredSystem, SystemContext},
+    task::{IntoTask, StoredTask, TaskContext},
 };
 use std::{collections::HashMap, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-/// An application composed from resources and scheduled systems.
+/// An application composed from resources and scheduled tasks.
 ///
 /// `App` is configured during startup. Calling `start`, `spawn`, or `run`
-/// executes systems against a cloned snapshot of the app's current resources and
-/// systems.
+/// executes tasks against a cloned snapshot of the app's current resources and
+/// tasks.
 pub struct App {
-    systems: HashMap<Schedule, Vec<StoredSystem>>,
+    tasks: HashMap<Schedule, Vec<StoredTask>>,
     resources: Resources,
     config: AppConfig,
 }
@@ -43,21 +43,21 @@ pub struct AppHandle {
 
 /// A named phase in the app lifecycle.
 ///
-/// Systems are registered into schedules with `App::add_system`.
+/// Tasks are registered into schedules with `App::add_task`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Schedule {
-    /// Runs once before task systems are spawned.
+    /// Runs once before work tasks are spawned.
     ///
-    /// Systems in this schedule run sequentially.
+    /// Tasks in this schedule run sequentially.
     Start,
     /// Runs after `Start` and before `Shutdown`.
     ///
-    /// Systems in this schedule are spawned concurrently and awaited together.
+    /// Tasks in this schedule are spawned concurrently and awaited together.
     Work,
     /// Runs when the app is exiting.
     ///
-    /// Shutdown systems run after normal completion, after shutdown is
-    /// requested, and after startup or task errors. Every shutdown system is
+    /// Shutdown tasks run after normal completion, after shutdown is
+    /// requested, and after startup or task errors. Every shutdown task is
     /// attempted before the app returns.
     Shutdown,
 }
@@ -67,7 +67,7 @@ impl App {
     /// Creates an empty app.
     pub fn new() -> Self {
         Self {
-            systems: HashMap::new(),
+            tasks: HashMap::new(),
             resources: Resources::default(),
             config: AppConfig::default(),
         }
@@ -84,7 +84,7 @@ impl App {
 
     /// Starts the app in a background Tokio task.
     ///
-    /// The spawned app uses a snapshot of the app's systems and resources at
+    /// The spawned app uses a snapshot of the app's tasks and resources at
     /// the time `spawn` is called. Changes made to the `App` after spawning do
     /// not affect the running task.
     pub fn spawn(&self) -> AppHandle {
@@ -95,47 +95,47 @@ impl App {
     ///
     /// This runs the `Start` schedule, then the `Work` schedule, then the
     /// `Shutdown` schedule. Like `spawn`, it executes a snapshot of the app's
-    /// systems and resources.
+    /// tasks and resources.
     pub async fn start(&self) -> Result<()> {
         self.runtime().start().await
     }
 
-    /// Runs one system against the app's resources.
+    /// Runs one task against the app's resources.
     ///
-    /// This does not add the system to a schedule and does not run any
-    /// scheduled systems. It is useful for tests and one-off system execution.
-    pub async fn run<I>(&self, system: impl IntoSystem<I>) -> Result<()> {
-        let context = SystemContext::root(
+    /// This does not add the task to a schedule and does not run any
+    /// scheduled tasks. It is useful for tests and one-off task execution.
+    pub async fn run<I>(&self, task: impl IntoTask<I>) -> Result<()> {
+        let context = TaskContext::root(
             self.resources.clone(),
             self.config.cancel_timeout,
             CancellationToken::new(),
         );
-        run_scoped(system.into_system(), context).await
+        run_scoped(task.into_task(), context).await
     }
 
     fn runtime(&self) -> Runtime {
         Runtime {
-            systems: self.systems.clone(),
+            tasks: self.tasks.clone(),
             resources: self.resources.clone(),
             config: self.config.clone(),
         }
     }
 
-    /// Adds a system to one of the app schedules.
+    /// Adds a task to one of the app schedules.
     ///
-    /// Systems in `Start` and `Shutdown` run sequentially. Systems in `Work`
+    /// Tasks in `Start` and `Shutdown` run sequentially. Tasks in `Work`
     /// are spawned concurrently and awaited before shutdown begins.
-    pub fn add_system<I>(&mut self, schedule: Schedule, system: impl IntoSystem<I>) -> &mut Self {
-        self.systems
+    pub fn add_task<I>(&mut self, schedule: Schedule, task: impl IntoTask<I>) -> &mut Self {
+        self.tasks
             .entry(schedule)
             .or_default()
-            .push(system.into_system());
+            .push(task.into_task());
         self
     }
 
     /// Registers an unbounded channel for messages of type `T`.
     ///
-    /// Systems can access this channel using `Sender<T>` and `Receiver<T>`.
+    /// Tasks can access this channel using `Sender<T>` and `Receiver<T>`.
     /// Receivers are competing consumers: each sent message is received by one
     /// receiver, not broadcast to every receiver.
     pub fn register_channel<T>(&mut self) -> &mut Self
@@ -153,7 +153,7 @@ impl App {
     /// Sending waits for capacity when the channel is full. Try-sending returns
     /// immediately when the channel is full.
     ///
-    /// Systems can access this channel using `Sender<T>` and `Receiver<T>`.
+    /// Tasks can access this channel using `Sender<T>` and `Receiver<T>`.
     /// Receivers are competing consumers: each sent message is received by one
     /// receiver, not broadcast to every receiver.
     pub fn register_bounded_channel<T>(&mut self, capacity: usize) -> &mut Self
@@ -168,7 +168,7 @@ impl App {
 
     /// Registers a broadcast for messages of type `T`.
     ///
-    /// Systems can publish using `Pub<T>` and subscribe using `Sub<T>`.
+    /// Tasks can publish using `Pub<T>` and subscribe using `Sub<T>`.
     /// Each subscriber receives its own copy of each message published after it
     /// subscribes. Slow subscribers may lag and miss messages when more than
     /// `capacity` messages are published before they receive them.
@@ -228,7 +228,7 @@ impl App {
     /// `insert_resource`, this does not panic when a resource of the same type
     /// already exists.
     ///
-    /// Panics if resources have already been shared with a running system and
+    /// Panics if resources have already been shared with a running task and
     /// the resource store can no longer be mutated.
     pub fn override_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
         self.resources.override_with(res);
@@ -260,7 +260,7 @@ impl AppHandle {
 }
 
 struct Runtime {
-    systems: HashMap<Schedule, Vec<StoredSystem>>,
+    tasks: HashMap<Schedule, Vec<StoredTask>>,
     resources: Resources,
     config: AppConfig,
 }
@@ -291,15 +291,15 @@ impl Runtime {
     }
 
     async fn run_start(&self, shutdown: CancellationToken) -> Result<()> {
-        if let Some(systems) = self.systems.get(&Schedule::Start) {
-            let context = SystemContext::root(
+        if let Some(tasks) = self.tasks.get(&Schedule::Start) {
+            let context = TaskContext::root(
                 self.resources.clone(),
                 self.config.cancel_timeout,
                 shutdown.clone(),
             );
 
-            for system in systems {
-                run_scoped(system.clone(), context.clone()).await?;
+            for task in tasks {
+                run_scoped(task.clone(), context.clone()).await?;
 
                 if shutdown.is_cancelled() {
                     break;
@@ -311,17 +311,17 @@ impl Runtime {
     }
 
     async fn run_tasks(&self, shutdown: CancellationToken) -> Result<()> {
-        if let Some(systems) = self.systems.get(&Schedule::Work) {
+        if let Some(tasks) = self.tasks.get(&Schedule::Work) {
             let root = TaskScope::default();
-            let context = SystemContext::root(
+            let context = TaskContext::root(
                 self.resources.clone(),
                 self.config.cancel_timeout,
                 shutdown.clone(),
             )
             .with_scope(root.clone());
 
-            for system in systems {
-                root.spawn_propagating(system.clone(), context.clone());
+            for task in tasks {
+                root.spawn_propagating(task.clone(), context.clone());
             }
 
             let join_scope = root.clone();
@@ -342,15 +342,15 @@ impl Runtime {
     async fn run_shutdown(&self, shutdown: CancellationToken) -> Result<()> {
         let mut first_error = None;
 
-        if let Some(systems) = self.systems.get(&Schedule::Shutdown) {
-            let context = SystemContext::root(
+        if let Some(tasks) = self.tasks.get(&Schedule::Shutdown) {
+            let context = TaskContext::root(
                 self.resources.clone(),
                 self.config.cancel_timeout,
                 shutdown,
             );
 
-            for system in systems {
-                if let Err(error) = run_scoped(system.clone(), context.clone()).await
+            for task in tasks {
+                if let Err(error) = run_scoped(task.clone(), context.clone()).await
                     && first_error.is_none()
                 {
                     first_error = Some(error);

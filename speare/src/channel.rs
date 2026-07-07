@@ -1,7 +1,7 @@
 use crate::{
     error::{Error, Result},
     resource::Res,
-    system::{SystemContext, SystemParam},
+    task::{TaskContext, TaskParam},
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -157,20 +157,20 @@ impl Channels {
     }
 }
 
-impl<T> SystemParam for Sender<T>
+impl<T> TaskParam for Sender<T>
 where
     T: Send + Sync + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Res::<Channels>::extract(context)?.sender::<T>()
     }
 }
 
-impl<T> SystemParam for Receiver<T>
+impl<T> TaskParam for Receiver<T>
 where
     T: Send + Sync + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Res::<Channels>::extract(context)?.receiver::<T>()
     }
 }
@@ -316,20 +316,20 @@ impl Broadcasts {
     }
 }
 
-impl<T> SystemParam for Pub<T>
+impl<T> TaskParam for Pub<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Res::<Broadcasts>::extract(context)?.publisher::<T>()
     }
 }
 
-impl<T> SystemParam for Sub<T>
+impl<T> TaskParam for Sub<T>
 where
     T: Clone + Send + Sync + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Res::<Broadcasts>::extract(context)?.subscriber::<T>()
     }
 }

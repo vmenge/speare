@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    system::{SystemContext, SystemParam},
+    task::{TaskContext, TaskParam},
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -56,7 +56,7 @@ impl Resources {
     /// Gets mutable access to a resource.
     ///
     /// Panics if the resource is not registered or if resources have already
-    /// been shared with running systems.
+    /// been shared with running tasks.
     pub fn get_mut<R>(&mut self) -> &mut R
     where
         R: Send + Sync + 'static,
@@ -74,7 +74,7 @@ impl Resources {
 
     /// Gets mutable access to a resource, inserting it first if it is missing.
     ///
-    /// Panics if resources have already been shared with running systems.
+    /// Panics if resources have already been shared with running tasks.
     pub fn get_or_insert_with<R>(&mut self, f: impl FnOnce() -> R) -> &mut R
     where
         R: Send + Sync + 'static,
@@ -113,11 +113,11 @@ impl<T> Deref for Res<T> {
     }
 }
 
-impl<T> SystemParam for Res<T>
+impl<T> TaskParam for Res<T>
 where
     T: Send + Sync + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Ok(Res(context.resources().get::<T>()?))
     }
 }

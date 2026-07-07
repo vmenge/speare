@@ -1,4 +1,4 @@
-use speare::{App, Backoff, Error, Result, Retry, Schedule, SystemExt};
+use speare::{App, Backoff, Error, Result, Retry, Schedule, TaskExt};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -15,18 +15,18 @@ fn backoff_defaults_to_none() {
 }
 
 #[tokio::test]
-async fn never_retries_failed_system() {
+async fn never_retries_failed_task() {
     let attempts = Arc::new(AtomicUsize::new(0));
-    let system_attempts = attempts.clone();
+    let task_attempts = attempts.clone();
 
     let err = App::new()
-        .add_system(
+        .add_task(
             Schedule::Start,
             (move || {
-                let system_attempts = system_attempts.clone();
+                let task_attempts = task_attempts.clone();
 
                 async move {
-                    system_attempts.fetch_add(1, Ordering::SeqCst);
+                    task_attempts.fetch_add(1, Ordering::SeqCst);
                     Err(Error::source(std::io::Error::other("failed")))
                 }
             })
@@ -42,18 +42,18 @@ async fn never_retries_failed_system() {
 }
 
 #[tokio::test]
-async fn max_retries_failed_system() {
+async fn max_retries_failed_task() {
     let attempts = Arc::new(AtomicUsize::new(0));
-    let system_attempts = attempts.clone();
+    let task_attempts = attempts.clone();
 
     let err = App::new()
-        .add_system(
+        .add_task(
             Schedule::Start,
             (move || {
-                let system_attempts = system_attempts.clone();
+                let task_attempts = task_attempts.clone();
 
                 async move {
-                    system_attempts.fetch_add(1, Ordering::SeqCst);
+                    task_attempts.fetch_add(1, Ordering::SeqCst);
                     Err(Error::source(std::io::Error::other("failed")))
                 }
             })
@@ -71,16 +71,16 @@ async fn max_retries_failed_system() {
 #[tokio::test]
 async fn always_retries_until_success() -> Result<()> {
     let attempts = Arc::new(AtomicUsize::new(0));
-    let system_attempts = attempts.clone();
+    let task_attempts = attempts.clone();
 
     App::new()
-        .add_system(
+        .add_task(
             Schedule::Start,
             (move || {
-                let system_attempts = system_attempts.clone();
+                let task_attempts = task_attempts.clone();
 
                 async move {
-                    let attempt = system_attempts.fetch_add(1, Ordering::SeqCst);
+                    let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
 
                     if attempt < 2 {
                         Err(Error::source(std::io::Error::other("failed")))

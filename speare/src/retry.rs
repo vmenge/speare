@@ -1,19 +1,19 @@
-use crate::system::{IntoSystem, StoredSystem};
+use crate::task::{IntoTask, StoredTask};
 use std::time::Duration;
 
-/// Controls whether a failed system should be restarted.
+/// Controls whether a failed task should be restarted.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Retry {
-    /// Do not restart the system after a failure.
+    /// Do not restart the task after a failure.
     #[default]
     Never,
-    /// Restart the system forever until it succeeds or the running task is cancelled.
+    /// Restart the task forever until it succeeds or the running task is cancelled.
     Always,
-    /// Restart the system at most `usize` times after the initial attempt.
+    /// Restart the task at most `usize` times after the initial attempt.
     Max(usize),
 }
 
-/// Controls how long to wait before restarting a failed system.
+/// Controls how long to wait before restarting a failed task.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Backoff {
     /// Restart immediately with no delay.
@@ -29,10 +29,10 @@ pub enum Backoff {
     },
 }
 
-/// Restart behavior for a system.
+/// Restart behavior for a task.
 ///
-/// This is the lower-level policy behind `SystemExt::retry`. It is intentionally
-/// scoped to one system; broader supervision behavior belongs around task scopes.
+/// This is the lower-level policy behind `TaskExt::retry`. It is intentionally
+/// scoped to one task; broader supervision behavior belongs around task scopes.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RestartPolicy {
     retry: Retry,
@@ -79,11 +79,11 @@ impl RestartPolicy {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SystemPolicy {
+pub(crate) struct TaskPolicy {
     pub(crate) restart: RestartPolicy,
 }
 
-impl SystemPolicy {
+impl TaskPolicy {
     pub(crate) fn with_retry(mut self, retry: Retry) -> Self {
         self.restart = RestartPolicy::new(retry);
         self
@@ -95,47 +95,47 @@ impl SystemPolicy {
     }
 }
 
-/// A system wrapped with runtime policy.
-pub struct PolicySystem<S> {
-    system: S,
-    policy: SystemPolicy,
+/// A task wrapped with runtime policy.
+pub struct PolicyTask<S> {
+    task: S,
+    policy: TaskPolicy,
 }
 
-/// A system wrapped with restart behavior.
-pub type RetrySystem<S> = PolicySystem<S>;
+/// A task wrapped with restart behavior.
+pub type RetryTask<S> = PolicyTask<S>;
 
-impl<S> PolicySystem<S> {
-    /// Restarts the system according to `retry` when it returns an error.
+impl<S> PolicyTask<S> {
+    /// Restarts the task according to `retry` when it returns an error.
     pub fn retry(mut self, retry: Retry) -> Self {
         self.policy = self.policy.with_retry(retry);
         self
     }
 
-    /// Sets the backoff used before restarting the system.
+    /// Sets the backoff used before restarting the task.
     pub fn backoff(mut self, backoff: Backoff) -> Self {
         self.policy = self.policy.with_backoff(backoff);
         self
     }
 }
 
-/// Extension methods for systems.
-pub trait SystemExt: Sized {
-    /// Restarts the system according to `retry` when it returns an error.
-    fn retry(self, retry: Retry) -> PolicySystem<Self> {
-        PolicySystem {
-            system: self,
-            policy: SystemPolicy::default().with_retry(retry),
+/// Extension methods for tasks.
+pub trait TaskExt: Sized {
+    /// Restarts the task according to `retry` when it returns an error.
+    fn retry(self, retry: Retry) -> PolicyTask<Self> {
+        PolicyTask {
+            task: self,
+            policy: TaskPolicy::default().with_retry(retry),
         }
     }
 }
 
-impl<S> SystemExt for S {}
+impl<S> TaskExt for S {}
 
-impl<Input, S> IntoSystem<Input> for PolicySystem<S>
+impl<Input, S> IntoTask<Input> for PolicyTask<S>
 where
-    S: IntoSystem<Input>,
+    S: IntoTask<Input>,
 {
-    fn into_system(self) -> StoredSystem {
-        self.system.into_system().with_policy(self.policy)
+    fn into_task(self) -> StoredTask {
+        self.task.into_task().with_policy(self.policy)
     }
 }

@@ -44,27 +44,27 @@ impl fmt::Display for Error {
     }
 }
 
-pub trait IntoSystemResult {
-    fn into_system_result(self) -> Result<()>;
+pub trait IntoTaskResult {
+    fn into_task_result(self) -> Result<()>;
 }
 
-impl IntoSystemResult for () {
-    fn into_system_result(self) -> Result<()> {
+impl IntoTaskResult for () {
+    fn into_task_result(self) -> Result<()> {
         Ok(())
     }
 }
 
-impl IntoSystemResult for Result<()> {
-    fn into_system_result(self) -> Result<()> {
+impl IntoTaskResult for Result<()> {
+    fn into_task_result(self) -> Result<()> {
         self
     }
 }
 
-impl<E> IntoSystemResult for std::result::Result<(), E>
+impl<E> IntoTaskResult for std::result::Result<(), E>
 where
     E: error::Error + Send + Sync + 'static,
 {
-    fn into_system_result(self) -> Result<()> {
+    fn into_task_result(self) -> Result<()> {
         self.map_err(Error::source)
     }
 }

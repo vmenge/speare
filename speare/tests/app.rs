@@ -30,9 +30,9 @@ fn override_resource_replaces_existing_resource() -> Result<()> {
 }
 
 #[tokio::test]
-async fn spawn_join_returns_system_error() {
+async fn spawn_join_returns_task_error() {
     let err = App::new()
-        .add_system(Schedule::Start, || async {
+        .add_task(Schedule::Start, || async {
             Err(Error::source(std::io::Error::other("failed")))
         })
         .spawn()
@@ -55,7 +55,7 @@ async fn app_can_be_accessed_after_spawn() -> Result<()> {
 }
 
 #[tokio::test]
-async fn run_executes_one_system_with_app_resources() -> Result<()> {
+async fn run_executes_one_task_with_app_resources() -> Result<()> {
     let mut app = App::new();
     app.insert_resource(5i32);
 

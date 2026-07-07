@@ -1,7 +1,7 @@
 use crate::{
     error::{Error, Result},
     resource::Res,
-    system::{SystemContext, SystemParam},
+    task::{TaskContext, TaskParam},
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -226,22 +226,22 @@ impl Queries {
     }
 }
 
-impl<Req, Resp> SystemParam for Querier<Req, Resp>
+impl<Req, Resp> TaskParam for Querier<Req, Resp>
 where
     Req: Send + 'static,
     Resp: Send + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Res::<Queries>::extract(context)?.querier::<Req, Resp>()
     }
 }
 
-impl<Req, Resp> SystemParam for Query<Req, Resp>
+impl<Req, Resp> TaskParam for Query<Req, Resp>
 where
     Req: Send + 'static,
     Resp: Send + 'static,
 {
-    fn extract(context: &SystemContext) -> Result<Self> {
+    fn extract(context: &TaskContext) -> Result<Self> {
         Res::<Queries>::extract(context)?.query_receiver::<Req, Resp>()
     }
 }

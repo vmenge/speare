@@ -6,7 +6,7 @@ mod query;
 mod resource;
 mod retry;
 mod shutdown;
-mod system;
+mod task;
 
 pub use app::{App, AppHandle, Schedule};
 pub use channel::{
@@ -14,28 +14,28 @@ pub use channel::{
     Receiver, RecvError, SendError, Sender, Sub, TryRecvError, TrySendError,
 };
 pub use scope::{Child, ChildFailure, ChildId, Scope};
-pub use error::{Error, IntoSystemResult, Result};
+pub use error::{Error, IntoTaskResult, Result};
 pub use query::{
     Querier, Query, QueryError, QueryRecvError, QueryRegistryError, QueryTryRecvError, ReplyError,
     Request, TryQueryError,
 };
 pub use resource::Res;
 pub use retry::{
-    Backoff, PolicySystem, RestartPolicy, Retry, RetrySystem, SystemExt,
+    Backoff, PolicyTask, RestartPolicy, Retry, RetryTask, TaskExt,
 };
 pub use shutdown::Shutdown;
-pub use system::{IntoSystem, SystemParam};
+pub use task::{IntoTask, TaskParam};
 
-/// Common imports for application and system authoring.
+/// Common imports for application and task authoring.
 ///
-/// Import this with `use rs::prelude::*;`.
+/// Import this with `use speare::prelude::*;`.
 pub mod prelude {
     pub use crate::{
         App, AppHandle, Backoff, BroadcastRecvError, BroadcastTryRecvError, ChannelError, Child,
-        ChildFailure, ChildId, Error, IntoSystem, IntoSystemResult, PolicySystem, Pub,
+        ChildFailure, ChildId, Error, IntoTask, IntoTaskResult, PolicyTask, Pub,
         PublishError, Querier, Query, QueryError, QueryRecvError, QueryRegistryError,
         QueryTryRecvError, Receiver, RecvError, ReplyError, Request, Res, RestartPolicy, Result,
-        Retry, RetrySystem, Schedule, Scope, SendError, Sender, Shutdown, Sub, SystemExt,
-        SystemParam, TryQueryError, TryRecvError, TrySendError,
+        Retry, RetryTask, Schedule, Scope, SendError, Sender, Shutdown, Sub, TaskExt,
+        TaskParam, TryQueryError, TryRecvError, TrySendError,
     };
 }

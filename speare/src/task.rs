@@ -1,51 +1,51 @@
 use crate::{
-    error::{IntoSystemResult, Result},
+    error::{IntoTaskResult, Result},
     resource::Resources,
-    retry::SystemPolicy,
+    retry::TaskPolicy,
     scope::TaskScope,
 };
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-pub(crate) type SystemFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
+pub(crate) type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
 #[derive(Clone)]
-pub(crate) struct StoredSystem {
-    run: Arc<dyn Fn(&SystemContext) -> SystemFuture + Send + Sync>,
-    policy: SystemPolicy,
+pub(crate) struct StoredTask {
+    run: Arc<dyn Fn(&TaskContext) -> TaskFuture + Send + Sync>,
+    policy: TaskPolicy,
 }
 
-impl StoredSystem {
-    pub(crate) fn new(run: Arc<dyn Fn(&SystemContext) -> SystemFuture + Send + Sync>) -> Self {
+impl StoredTask {
+    pub(crate) fn new(run: Arc<dyn Fn(&TaskContext) -> TaskFuture + Send + Sync>) -> Self {
         Self {
             run,
-            policy: SystemPolicy::default(),
+            policy: TaskPolicy::default(),
         }
     }
 
-    pub(crate) fn run(&self, context: &SystemContext) -> SystemFuture {
+    pub(crate) fn run(&self, context: &TaskContext) -> TaskFuture {
         (self.run)(context)
     }
 
-    pub(crate) fn policy(&self) -> SystemPolicy {
+    pub(crate) fn policy(&self) -> TaskPolicy {
         self.policy
     }
 
-    pub(crate) fn with_policy(mut self, policy: SystemPolicy) -> Self {
+    pub(crate) fn with_policy(mut self, policy: TaskPolicy) -> Self {
         self.policy = policy;
         self
     }
 }
 
 #[derive(Clone)]
-pub struct SystemContext {
+pub struct TaskContext {
     resources: Resources,
     scope: TaskScope,
     cancel_timeout: Duration,
     shutdown: CancellationToken,
 }
 
-impl SystemContext {
+impl TaskContext {
     pub(crate) fn root(
         resources: Resources,
         cancel_timeout: Duration,
@@ -85,57 +85,57 @@ impl SystemContext {
     }
 }
 
-pub trait SystemParam {
-    fn extract(context: &SystemContext) -> Result<Self>
+pub trait TaskParam {
+    fn extract(context: &TaskContext) -> Result<Self>
     where
         Self: Sized;
 }
 
-pub trait IntoSystem<Input> {
-    fn into_system(self) -> StoredSystem;
+pub trait IntoTask<Input> {
+    fn into_task(self) -> StoredTask;
 }
 
-macro_rules! impl_system {
+macro_rules! impl_task {
     ($($params:ident),*) => {
         #[allow(unused_variables)]
         #[allow(non_snake_case)]
-        impl<Fun, Fut, $($params,)*> IntoSystem<($($params,)*)> for Fun
+        impl<Fun, Fut, $($params,)*> IntoTask<($($params,)*)> for Fun
         where
             Fun: Fn($($params),*) -> Fut + Send + Sync + 'static,
             Fut: Future + Send + 'static,
-            Fut::Output: IntoSystemResult,
-            $($params: SystemParam + 'static,)*
+            Fut::Output: IntoTaskResult,
+            $($params: TaskParam + 'static,)*
         {
-            fn into_system(self) -> StoredSystem {
-                StoredSystem::new(Arc::new(move |context| {
+            fn into_task(self) -> StoredTask {
+                StoredTask::new(Arc::new(move |context| {
                     $(
                     let $params = match $params::extract(context) {
                         Ok(param) => param,
                         Err(err) => {
-                            let future: SystemFuture = Box::pin(async move { Err(err) });
+                            let future: TaskFuture = Box::pin(async move { Err(err) });
                             return future;
                         }
                     };
                     )*
 
                     let future = self($($params),*);
-                    Box::pin(async move { future.await.into_system_result() })
+                    Box::pin(async move { future.await.into_task_result() })
                 }))
             }
         }
     };
 }
 
-impl_system!();
-impl_system!(T1);
-impl_system!(T1, T2);
-impl_system!(T1, T2, T3);
-impl_system!(T1, T2, T3, T4);
-impl_system!(T1, T2, T3, T4, T5);
-impl_system!(T1, T2, T3, T4, T5, T6);
-impl_system!(T1, T2, T3, T4, T5, T6, T7);
-impl_system!(T1, T2, T3, T4, T5, T6, T7, T8);
-impl_system!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
-impl_system!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
-impl_system!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
-impl_system!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
+impl_task!();
+impl_task!(T1);
+impl_task!(T1, T2);
+impl_task!(T1, T2, T3);
+impl_task!(T1, T2, T3, T4);
+impl_task!(T1, T2, T3, T4, T5);
+impl_task!(T1, T2, T3, T4, T5, T6);
+impl_task!(T1, T2, T3, T4, T5, T6, T7);
+impl_task!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_task!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_task!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_task!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+impl_task!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
