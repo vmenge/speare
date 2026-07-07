@@ -1,4 +1,5 @@
 use crate::{
+    app::AppBuilder,
     error::{Error, Result},
     resource::Res,
     task::{TaskContext, TaskParam},
@@ -10,6 +11,71 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::broadcast;
+
+pub trait AppChannelExt {
+    /// Registers an unbounded channel for messages of type `T`.
+    ///
+    /// Tasks can access this channel using `Sender<T>` and `Receiver<T>`.
+    /// Receivers are competing consumers: each sent message is received by one
+    /// receiver, not broadcast to every receiver.
+    fn register_channel<T>(&mut self) -> &mut Self
+    where
+        T: Send + Sync + 'static;
+
+    /// Registers a bounded channel for messages of type `T`.
+    ///
+    /// Sending waits for capacity when the channel is full. Try-sending returns
+    /// immediately when the channel is full.
+    ///
+    /// Tasks can access this channel using `Sender<T>` and `Receiver<T>`.
+    /// Receivers are competing consumers: each sent message is received by one
+    /// receiver, not broadcast to every receiver.
+    fn register_bounded_channel<T>(&mut self, capacity: usize) -> &mut Self
+    where
+        T: Send + Sync + 'static;
+
+    /// Registers a broadcast for messages of type `T`.
+    ///
+    /// Tasks can publish using `Pub<T>` and subscribe using `Sub<T>`.
+    /// Each subscriber receives its own copy of each message published after it
+    /// subscribes. Slow subscribers may lag and miss messages when more than
+    /// `capacity` messages are published before they receive them.
+    fn register_broadcast<T>(&mut self, capacity: usize) -> &mut Self
+    where
+        T: Clone + Send + Sync + 'static;
+}
+
+impl AppChannelExt for AppBuilder {
+    fn register_channel<T>(&mut self) -> &mut Self
+    where
+        T: Send + Sync + 'static,
+    {
+        self.resources_mut()
+            .get_or_insert_with(Channels::default)
+            .register::<T>(flume::unbounded());
+        self
+    }
+
+    fn register_bounded_channel<T>(&mut self, capacity: usize) -> &mut Self
+    where
+        T: Send + Sync + 'static,
+    {
+        self.resources_mut()
+            .get_or_insert_with(Channels::default)
+            .register::<T>(flume::bounded(capacity));
+        self
+    }
+
+    fn register_broadcast<T>(&mut self, capacity: usize) -> &mut Self
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        self.resources_mut()
+            .get_or_insert_with(Broadcasts::default)
+            .register::<T>(capacity);
+        self
+    }
+}
 
 /// Sends messages to a registered channel.
 pub struct Sender<T> {

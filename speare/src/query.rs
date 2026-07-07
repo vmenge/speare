@@ -1,4 +1,5 @@
 use crate::{
+    app::AppBuilder,
     error::{Error, Result},
     resource::Res,
     task::{TaskContext, TaskParam},
@@ -11,6 +12,50 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::oneshot;
+
+pub trait AppQueryExt {
+    /// Registers an unbounded request/response query for `Req` requests and `Res` responses.
+    ///
+    /// Query workers can receive requests with `Query<Req, Res>`. Callers can
+    /// send requests and await replies with `Querier<Req, Res>`.
+    fn register_query<Req, Res>(&mut self) -> &mut Self
+    where
+        Req: Send + 'static,
+        Res: Send + 'static;
+
+    /// Registers a bounded request/response query for `Req` requests and `Res` responses.
+    ///
+    /// `Querier::query` waits for capacity when the queue is full.
+    /// `Querier::try_query` returns immediately if the queue is full.
+    fn register_bounded_query<Req, Res>(&mut self, capacity: usize) -> &mut Self
+    where
+        Req: Send + 'static,
+        Res: Send + 'static;
+}
+
+impl AppQueryExt for AppBuilder {
+    fn register_query<Req, Res>(&mut self) -> &mut Self
+    where
+        Req: Send + 'static,
+        Res: Send + 'static,
+    {
+        self.resources_mut()
+            .get_or_insert_with(Queries::default)
+            .register::<Req, Res>(flume::unbounded());
+        self
+    }
+
+    fn register_bounded_query<Req, Res>(&mut self, capacity: usize) -> &mut Self
+    where
+        Req: Send + 'static,
+        Res: Send + 'static,
+    {
+        self.resources_mut()
+            .get_or_insert_with(Queries::default)
+            .register::<Req, Res>(flume::bounded(capacity));
+        self
+    }
+}
 
 #[derive(Clone, Copy, Eq)]
 struct QueryId {

@@ -10,14 +10,14 @@ mod task;
 
 pub use app::{App, AppBuilder, AppHandle, Plugin, Schedule};
 pub use channel::{
-    BroadcastError, BroadcastRecvError, BroadcastTryRecvError, ChannelError, Pub, PublishError,
-    Receiver, RecvError, SendError, Sender, Sub, TryRecvError, TrySendError,
+    AppChannelExt, BroadcastError, BroadcastRecvError, BroadcastTryRecvError, ChannelError, Pub,
+    PublishError, Receiver, RecvError, SendError, Sender, Sub, TryRecvError, TrySendError,
 };
 pub use scope::{Child, ChildFailure, ChildId, Scope};
 pub use error::{Error, IntoTaskResult, Result};
 pub use query::{
-    Querier, Query, QueryError, QueryRecvError, QueryRegistryError, QueryTryRecvError, ReplyError,
-    Request, TryQueryError,
+    AppQueryExt, Querier, Query, QueryError, QueryRecvError, QueryRegistryError,
+    QueryTryRecvError, ReplyError, Request, TryQueryError,
 };
 pub use resource::Res;
 pub use retry::{
@@ -31,11 +31,11 @@ pub use task::{IntoTask, TaskParam};
 /// Import this with `use speare::prelude::*;`.
 pub mod prelude {
     pub use crate::{
-        App, AppBuilder, AppHandle, Backoff, BroadcastRecvError, BroadcastTryRecvError,
-        ChannelError, Child, ChildFailure, ChildId, Error, IntoTask, IntoTaskResult, Plugin, PolicyTask, Pub,
-        PublishError, Querier, Query, QueryError, QueryRecvError, QueryRegistryError,
-        QueryTryRecvError, Receiver, RecvError, ReplyError, Request, Res, RestartPolicy, Result,
-        Retry, RetryTask, Schedule, Scope, SendError, Sender, Shutdown, Sub, TaskExt,
-        TaskParam, TryQueryError, TryRecvError, TrySendError,
+        App, AppBuilder, AppChannelExt, AppHandle, AppQueryExt, Backoff, BroadcastRecvError,
+        BroadcastTryRecvError, ChannelError, Child, ChildFailure, ChildId, Error, IntoTask,
+        IntoTaskResult, Plugin, PolicyTask, Pub, PublishError, Querier, Query, QueryError,
+        QueryRecvError, QueryRegistryError, QueryTryRecvError, Receiver, RecvError, ReplyError,
+        Request, Res, RestartPolicy, Result, Retry, RetryTask, Schedule, Scope, SendError, Sender,
+        Shutdown, Sub, TaskExt, TaskParam, TryQueryError, TryRecvError, TrySendError,
     };
 }

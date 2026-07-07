@@ -1,7 +1,5 @@
 use crate::{
-    channel::{Broadcasts, Channels},
     error::{Error, Result},
-    query::Queries,
     resource::{Res, Resources},
     scope::{TaskScope, run_scoped},
     task::{IntoTask, StoredTask, TaskContext},
@@ -155,85 +153,6 @@ impl App {
         self
     }
 
-    /// Registers an unbounded channel for messages of type `T`.
-    ///
-    /// Tasks can access this channel using `Sender<T>` and `Receiver<T>`.
-    /// Receivers are competing consumers: each sent message is received by one
-    /// receiver, not broadcast to every receiver.
-    pub fn register_channel<T>(&mut self) -> &mut Self
-    where
-        T: Send + Sync + 'static,
-    {
-        self.resources
-            .get_or_insert_with(Channels::default)
-            .register::<T>(flume::unbounded());
-        self
-    }
-
-    /// Registers a bounded channel for messages of type `T`.
-    ///
-    /// Sending waits for capacity when the channel is full. Try-sending returns
-    /// immediately when the channel is full.
-    ///
-    /// Tasks can access this channel using `Sender<T>` and `Receiver<T>`.
-    /// Receivers are competing consumers: each sent message is received by one
-    /// receiver, not broadcast to every receiver.
-    pub fn register_bounded_channel<T>(&mut self, capacity: usize) -> &mut Self
-    where
-        T: Send + Sync + 'static,
-    {
-        self.resources
-            .get_or_insert_with(Channels::default)
-            .register::<T>(flume::bounded(capacity));
-        self
-    }
-
-    /// Registers a broadcast for messages of type `T`.
-    ///
-    /// Tasks can publish using `Pub<T>` and subscribe using `Sub<T>`.
-    /// Each subscriber receives its own copy of each message published after it
-    /// subscribes. Slow subscribers may lag and miss messages when more than
-    /// `capacity` messages are published before they receive them.
-    pub fn register_broadcast<T>(&mut self, capacity: usize) -> &mut Self
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        self.resources
-            .get_or_insert_with(Broadcasts::default)
-            .register::<T>(capacity);
-        self
-    }
-
-    /// Registers an unbounded request/response query for `Req` requests and `Res` responses.
-    ///
-    /// Query workers can receive requests with `Query<Req, Res>`. Callers can
-    /// send requests and await replies with `Querier<Req, Res>`.
-    pub fn register_query<Req, Res>(&mut self) -> &mut Self
-    where
-        Req: Send + 'static,
-        Res: Send + 'static,
-    {
-        self.resources
-            .get_or_insert_with(Queries::default)
-            .register::<Req, Res>(flume::unbounded());
-        self
-    }
-
-    /// Registers a bounded request/response query for `Req` requests and `Res` responses.
-    ///
-    /// `Querier::query` waits for capacity when the queue is full.
-    /// `Querier::try_query` returns immediately if the queue is full.
-    pub fn register_bounded_query<Req, Res>(&mut self, capacity: usize) -> &mut Self
-    where
-        Req: Send + 'static,
-        Res: Send + 'static,
-    {
-        self.resources
-            .get_or_insert_with(Queries::default)
-            .register::<Req, Res>(flume::bounded(capacity));
-        self
-    }
-
     /// Gets a resource from the app.
     ///
     /// Returns an error if the resource has not been inserted.
@@ -315,6 +234,10 @@ impl AppBuilder {
     pub fn insert_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
         self.resources.insert(res);
         self
+    }
+
+    pub(crate) fn resources_mut(&mut self) -> &mut Resources {
+        &mut self.resources
     }
 }
 
