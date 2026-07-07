@@ -19,10 +19,7 @@ impl Resources {
     {
         let resources = Arc::get_mut(&mut self.0).expect("resources are already shared");
 
-        if resources
-            .insert(TypeId::of::<R>(), Arc::new(res))
-            .is_some()
-        {
+        if resources.insert(TypeId::of::<R>(), Arc::new(res)).is_some() {
             panic!(
                 "{} is already registered as a resource. Cannot register the same resource type twice.",
                 type_name::<R>()

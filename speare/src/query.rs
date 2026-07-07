@@ -136,9 +136,7 @@ where
                 flume::TrySendError::Disconnected(request) => TryQueryError::Closed(request.data),
             })?;
 
-        reply_from
-            .await
-            .map_err(|_| TryQueryError::ResponseDropped)
+        reply_from.await.map_err(|_| TryQueryError::ResponseDropped)
     }
 }
 
@@ -162,7 +160,10 @@ where
 {
     /// Receives the next query request.
     pub async fn recv(&self) -> std::result::Result<Request<Req, Resp>, QueryRecvError> {
-        self.rx.recv_async().await.map_err(|_| QueryRecvError::Closed)
+        self.rx
+            .recv_async()
+            .await
+            .map_err(|_| QueryRecvError::Closed)
     }
 
     /// Attempts to receive a query request without waiting.

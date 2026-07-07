@@ -136,11 +136,15 @@ where
     S: IntoTask<Input>,
 {
     type Output = S::Output;
+    type Error = S::Error;
 
     fn run_task<'a>(
         &'a self,
         context: &'a crate::task::TaskContext,
-    ) -> impl std::future::Future<Output = crate::Result<Self::Output>> + Send + 'a {
+    ) -> impl std::future::Future<
+        Output = crate::Result<std::result::Result<Self::Output, Self::Error>>,
+    > + Send
+    + 'a {
         self.task.run_task(context)
     }
 

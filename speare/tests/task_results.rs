@@ -1,5 +1,6 @@
 use speare::prelude::*;
-use speare::Error;
+use speare::{Error, RunError};
+use std::error;
 use std::fmt;
 
 #[derive(Debug)]
@@ -11,17 +12,51 @@ impl fmt::Display for ReportLikeError {
     }
 }
 
+#[derive(Debug)]
+struct OriginalRunError;
+
+impl fmt::Display for OriginalRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("original run error")
+    }
+}
+
+impl error::Error for OriginalRunError {}
+
 #[tokio::test]
 async fn run_returns_successful_task_value() -> Result<(), Error> {
     // Arrange
     let app = App::new();
 
     // Act
-    let value = app.run(|| async { Ok::<i32, Error>(42) }).await?;
+    let value = app.run(async || -> Result<i32, Error> { Ok(42) }).await?;
 
     // Assert
     assert_eq!(value, 42);
     Ok(())
+}
+
+#[tokio::test]
+async fn run_returns_original_task_error_type() {
+    // Arrange
+    let app = App::new();
+
+    // Act
+    let err = app
+        .run(async || -> Result<(), OriginalRunError> { Err(OriginalRunError) })
+        .await
+        .unwrap_err();
+
+    // Assert
+    match &err {
+        RunError::Task(error) => assert_eq!(error.to_string(), "original run error"),
+        RunError::App(error) => panic!("expected task error, got app error: {error}"),
+    }
+    assert_eq!(err.to_string(), "original run error");
+    assert_eq!(
+        error::Error::source(&err).unwrap().to_string(),
+        "original run error"
+    );
 }
 
 #[tokio::test]
@@ -30,7 +65,7 @@ async fn run_still_accepts_unit_task_output() -> Result<(), Error> {
     let app = App::new();
 
     // Act
-    let value = app.run(|| async {}).await?;
+    let value = app.run(async || {}).await?;
 
     // Assert
     assert_eq!(value, ());
@@ -38,31 +73,66 @@ async fn run_still_accepts_unit_task_output() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn run_erases_std_error_from_result_task_output() {
+async fn run_preserves_std_error_from_result_task_output() {
     // Arrange
     let app = App::new();
 
     // Act
     let err = app
-        .run(|| async { Err::<i32, _>(std::io::Error::other("io failed")) })
+        .run(async || -> Result<i32, std::io::Error> { Err(std::io::Error::other("io failed")) })
         .await
         .unwrap_err();
 
     // Assert
-    assert_eq!(err.to_string(), "io failed");
+    match err {
+        RunError::Task(error) => assert_eq!(error.to_string(), "io failed"),
+        RunError::App(error) => panic!("expected task error, got app error: {error}"),
+    }
 }
 
 #[tokio::test]
-async fn run_erases_report_like_error_without_std_error_bound() {
+async fn run_preserves_report_like_error_without_std_error_bound() {
     // Arrange
     let app = App::new();
 
     // Act
     let err = app
-        .run(|| async { Err::<i32, _>(ReportLikeError("report failed")) })
+        .run(async || -> Result<i32, ReportLikeError> { Err(ReportLikeError("report failed")) })
         .await
         .unwrap_err();
 
     // Assert
-    assert_eq!(err.to_string(), "report failed");
+    match err {
+        RunError::Task(error) => assert_eq!(error.to_string(), "report failed"),
+        RunError::App(error) => panic!("expected task error, got app error: {error}"),
+    }
+}
+
+#[tokio::test]
+async fn run_maps_extraction_failure_to_app_error() {
+    // Arrange / Act
+    let err = App::new().run(async |_: Res<i32>| {}).await.unwrap_err();
+
+    // Assert
+    match err {
+        RunError::Task(error) => match error {},
+        RunError::App(error) => assert_eq!(error.to_string(), "i32 is not registered"),
+    }
+}
+
+#[tokio::test]
+async fn spawn_still_erases_task_error() {
+    // Arrange
+    let mut app = App::new();
+
+    // Act
+    app.spawn(async || -> Result<(), ReportLikeError> { Err(ReportLikeError("spawn failed")) });
+    let err = app.join().await.unwrap_err();
+
+    // Assert
+    assert_eq!(err.to_string(), "spawn failed");
+    assert!(matches!(
+        err,
+        Error::Report { message } if message == "spawn failed"
+    ));
 }

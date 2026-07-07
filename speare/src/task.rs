@@ -1,10 +1,10 @@
 use crate::{
-    error::{IntoTaskResult, Result},
+    error::{Error, IntoTaskResult, Result},
     resource::Resources,
     retry::{RestartPolicy, TaskPolicy},
     scope::TaskScope,
 };
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{fmt, future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
@@ -20,6 +20,7 @@ impl StoredTask {
     where
         T: IntoTask<I> + Send + Sync + 'static,
         T::Output: Send + 'static,
+        T::Error: fmt::Display + fmt::Debug + Send + Sync + 'static,
     {
         let policy = TaskPolicy {
             restart: task.restart_policy(),
@@ -31,7 +32,11 @@ impl StoredTask {
                 let task = task.clone();
                 let context = context.clone();
 
-                Box::pin(async move { task.run_task(&context).await.map(|_| ()) })
+                Box::pin(async move {
+                    let result = task.run_task(&context).await?;
+
+                    result.map(|_| ()).map_err(Error::report)
+                })
             }),
             policy,
         }
@@ -44,7 +49,6 @@ impl StoredTask {
     pub(crate) fn policy(&self) -> TaskPolicy {
         self.policy
     }
-
 }
 
 #[derive(Clone)]
@@ -103,11 +107,12 @@ pub trait TaskParam {
 
 pub trait IntoTask<Input> {
     type Output;
+    type Error;
 
     fn run_task<'a>(
         &'a self,
         context: &'a TaskContext,
-    ) -> impl Future<Output = Result<Self::Output>> + Send + 'a;
+    ) -> impl Future<Output = Result<std::result::Result<Self::Output, Self::Error>>> + Send + 'a;
 
     fn restart_policy(&self) -> RestartPolicy {
         RestartPolicy::default()
@@ -126,20 +131,20 @@ macro_rules! impl_task {
             $($params: TaskParam + 'static,)*
         {
             type Output = <Fut::Output as IntoTaskResult>::Output;
+            type Error = <Fut::Output as IntoTaskResult>::Error;
 
             fn run_task<'a>(
                 &'a self,
                 context: &'a TaskContext,
-            ) -> impl Future<Output = Result<Self::Output>> + Send + 'a {
+            ) -> impl Future<Output = Result<std::result::Result<Self::Output, Self::Error>>> + Send + 'a {
                 async move {
                     $(
                     let $params = $params::extract(context)?;
                     )*
 
-                    self($($params),*).await.into_task_result()
+                    Ok(self($($params),*).await.into_task_result())
                 }
             }
-
         }
     };
 }

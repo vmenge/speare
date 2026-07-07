@@ -13,7 +13,7 @@ pub use channel::{
     AppChannelExt, BroadcastError, BroadcastRecvError, BroadcastTryRecvError, ChannelError, Pub,
     PublishError, Receiver, RecvError, SendError, Sender, Sub, TryRecvError, TrySendError,
 };
-pub use error::{Error, IntoTaskResult, Result};
+pub use error::{Error, IntoTaskResult, Result, RunError};
 pub use query::{
     AppQueryExt, Querier, Query, QueryError, QueryRecvError, QueryRegistryError, QueryTryRecvError,
     ReplyError, Request, TryQueryError,

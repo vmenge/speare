@@ -1,5 +1,5 @@
-use speare::prelude::*;
 use speare::Error;
+use speare::prelude::*;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},

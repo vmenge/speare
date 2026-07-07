@@ -1,9 +1,6 @@
 use speare::Error;
 use speare::prelude::*;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 #[derive(Default)]
@@ -108,47 +105,31 @@ async fn app_can_spawn_and_join_again_after_successful_join() -> Result<(), Erro
 #[tokio::test]
 async fn app_resets_after_failed_join_and_can_run_new_root_tasks() -> Result<(), Error> {
     // Arrange
-    let ran_after_failure = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(Flag::default()).build();
 
     // Act
-    app.spawn(|| async { Err::<(), _>(Error::source(std::io::Error::other("root failed"))) });
+    app.spawn(async || -> Result<(), _> { Err("root failed") });
     let err = app.join().await.unwrap_err();
 
-    app.spawn({
-        let ran_after_failure = ran_after_failure.clone();
-        move || {
-            let ran_after_failure = ran_after_failure.clone();
-
-            async move {
-                ran_after_failure.store(true, Ordering::SeqCst);
-            }
-        }
+    app.spawn(async |ran: Res<Flag>| {
+        ran.0.store(true, Ordering::SeqCst);
     });
     app.join().await?;
 
     // Assert
     assert_eq!(err.to_string(), "root failed");
-    assert!(ran_after_failure.load(Ordering::SeqCst));
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn shutdown_requests_app_wide_cancellation_without_waiting() -> Result<(), Error> {
     // Arrange
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(Flag::default()).build();
 
-    app.spawn({
-        let cancelled = cancelled.clone();
-        move |scope: Scope| {
-            let cancelled = cancelled.clone();
-
-            async move {
-                scope.cancelled().await;
-                cancelled.store(true, Ordering::SeqCst);
-            }
-        }
+    app.spawn(async |scope: Scope, cancelled: Res<Flag>| {
+        scope.cancelled().await;
+        cancelled.0.store(true, Ordering::SeqCst);
     });
 
     // Act
@@ -156,33 +137,26 @@ async fn shutdown_requests_app_wide_cancellation_without_waiting() -> Result<(),
     app.join().await?;
 
     // Assert
-    assert!(cancelled.load(Ordering::SeqCst));
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
 #[tokio::test]
 async fn task_spawned_after_shutdown_observes_cancellation_immediately() -> Result<(), Error> {
     // Arrange
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(Flag::default()).build();
 
     // Act
     app.shutdown();
-    app.spawn({
-        let cancelled = cancelled.clone();
-        move |scope: Scope| {
-            let cancelled = cancelled.clone();
-
-            async move {
-                if scope.is_cancelled() {
-                    cancelled.store(true, Ordering::SeqCst);
-                }
-            }
+    app.spawn(async |scope: Scope, cancelled: Res<Flag>| {
+        if scope.is_cancelled() {
+            cancelled.0.store(true, Ordering::SeqCst);
         }
     });
     app.join().await?;
 
     // Assert
-    assert!(cancelled.load(Ordering::SeqCst));
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
+
     Ok(())
 }

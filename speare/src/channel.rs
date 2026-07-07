@@ -165,10 +165,8 @@ struct Channel<T> {
 pub(crate) struct Channels(Arc<HashMap<TypeId, Box<dyn Any + Send + Sync>>>);
 
 impl Channels {
-    pub(crate) fn register<T>(
-        &mut self,
-        channel: (flume::Sender<T>, flume::Receiver<T>),
-    ) where
+    pub(crate) fn register<T>(&mut self, channel: (flume::Sender<T>, flume::Receiver<T>))
+    where
         T: Send + Sync + 'static,
     {
         let channels = Arc::get_mut(&mut self.0).expect("channels are already shared");

@@ -1,5 +1,5 @@
 use crate::{
-    error::{Error, Result},
+    error::{Error, Result, RunError},
     resource::{Res, Resources},
     scope::{TaskScope, run_scoped, run_scoped_direct},
     task::{IntoTask, StoredTask, TaskContext},
@@ -83,6 +83,7 @@ impl App {
     where
         T: IntoTask<I> + Send + Sync + 'static,
         T::Output: Send + 'static,
+        T::Error: std::fmt::Display + std::fmt::Debug + Send + Sync + 'static,
     {
         let context = TaskContext::root(
             self.resources.clone(),
@@ -158,6 +159,7 @@ impl App {
     where
         T: IntoTask<I> + Send + Sync + 'static,
         T::Output: Send + 'static,
+        T::Error: std::fmt::Display + std::fmt::Debug + Send + Sync + 'static,
     {
         self.defers.push(StoredTask::from_task(task));
         self
@@ -166,7 +168,7 @@ impl App {
     /// Runs one task against the app's resources.
     ///
     /// This executes independently of the root task set.
-    pub async fn run<I, T>(&self, task: T) -> Result<T::Output>
+    pub async fn run<I, T>(&self, task: T) -> std::result::Result<T::Output, RunError<T::Error>>
     where
         T: IntoTask<I>,
     {
@@ -233,6 +235,7 @@ impl AppBuilder {
     where
         T: IntoTask<I> + Send + Sync + 'static,
         T::Output: Send + 'static,
+        T::Error: std::fmt::Display + std::fmt::Debug + Send + Sync + 'static,
     {
         self.defers.push(StoredTask::from_task(task));
         self
@@ -264,8 +267,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "i32 is already registered")]
     fn add_resource_panics_when_resource_type_is_registered_twice() {
-        App::builder()
-            .insert_resource(5i32)
-            .insert_resource(9i32);
+        App::builder().insert_resource(5i32).insert_resource(9i32);
     }
 }

@@ -55,36 +55,78 @@ impl fmt::Display for Error {
     }
 }
 
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Self::Source { source } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RunError<E> {
+    Task(E),
+    App(Error),
+}
+
+impl<E> fmt::Display for RunError<E>
+where
+    E: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Task(error) => error.fmt(f),
+            Self::App(error) => error.fmt(f),
+        }
+    }
+}
+
+impl<E> error::Error for RunError<E>
+where
+    E: error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Self::Task(error) => Some(error),
+            Self::App(error) => Some(error),
+        }
+    }
+}
+
+impl<E> From<RunError<E>> for Error
+where
+    E: fmt::Display + fmt::Debug + Send + Sync + 'static,
+{
+    fn from(error: RunError<E>) -> Self {
+        match error {
+            RunError::Task(error) => Self::report(error),
+            RunError::App(error) => error,
+        }
+    }
+}
+
 pub trait IntoTaskResult {
     type Output;
+    type Error;
 
-    fn into_task_result(self) -> Result<Self::Output>;
+    fn into_task_result(self) -> std::result::Result<Self::Output, Self::Error>;
 }
 
 impl IntoTaskResult for () {
     type Output = ();
+    type Error = std::convert::Infallible;
 
-    fn into_task_result(self) -> Result<Self::Output> {
+    fn into_task_result(self) -> std::result::Result<Self::Output, Self::Error> {
         Ok(())
     }
 }
 
-impl<T, E> IntoTaskResult for std::result::Result<T, E>
-where
-    E: fmt::Display + fmt::Debug + Send + Sync + 'static,
-{
+impl<T, E> IntoTaskResult for std::result::Result<T, E> {
     type Output = T;
+    type Error = E;
 
-    fn into_task_result(self) -> Result<Self::Output> {
-        self.map_err(Error::report)
-    }
-}
-
-impl<E> From<E> for Error
-where
-    E: error::Error + Send + Sync + 'static,
-{
-    fn from(error: E) -> Self {
-        Self::source(error)
+    fn into_task_result(self) -> std::result::Result<Self::Output, Self::Error> {
+        self
     }
 }

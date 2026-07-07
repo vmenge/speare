@@ -48,7 +48,7 @@ async fn max_retries_failed_task() {
     };
 
     // Act
-    let err = App::new()
+    let err = app
         .run(inc_attempts.retry(Retry::Max(2)))
         .await
         .unwrap_err();
@@ -75,7 +75,7 @@ async fn always_retries_until_success() -> Result<(), Error> {
     };
 
     // Act
-    App::new().run(inc_attempts.retry(Retry::Always)).await?;
+    app.run(inc_attempts.retry(Retry::Always)).await?;
 
     // Assert
     assert_eq!(app.get::<Attempts>().unwrap().0.load(Ordering::SeqCst), 3);

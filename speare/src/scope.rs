@@ -1,14 +1,17 @@
 use crate::{
-    error::{Error, Result},
+    error::{Error, Result, RunError},
     task::{IntoTask, StoredTask, TaskContext, TaskFuture, TaskParam},
 };
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
-};
 use std::time::Duration;
+use std::{
+    fmt,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 use tokio::{
-    sync::{broadcast, Notify},
+    sync::{Notify, broadcast},
     task::{AbortHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
@@ -45,6 +48,7 @@ impl Scope {
     where
         T: IntoTask<I> + Send + Sync + 'static,
         T::Output: Send + 'static,
+        T::Error: fmt::Display + fmt::Debug + Send + Sync + 'static,
     {
         self.context
             .scope()
@@ -196,10 +200,7 @@ impl ChildState {
     }
 
     fn result(&self) -> Option<Result<()>> {
-        self.result
-            .lock()
-            .expect("child state is poisoned")
-            .clone()
+        self.result.lock().expect("child state is poisoned").clone()
     }
 
     async fn finished(&self) {
@@ -259,6 +260,7 @@ impl TaskScope {
     where
         T: IntoTask<I> + Send + Sync + 'static,
         T::Output: Send + 'static,
+        T::Error: fmt::Display + fmt::Debug + Send + Sync + 'static,
     {
         let id = ChildId(self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let child_scope = self.child();
@@ -276,7 +278,11 @@ impl TaskScope {
             .as_mut()
             .expect("task scope is already joining")
             .spawn(async move {
-                let result = run_scoped_direct(&task, child_context).await.map(|_| ());
+                let result = match run_scoped_direct(&task, child_context).await {
+                    Ok(_) => Ok(()),
+                    Err(RunError::App(error)) => Err(error),
+                    Err(RunError::Task(error)) => Err(Error::report(error)),
+                };
 
                 if let Err(error) = &result {
                     let failure = ChildFailure {
@@ -495,7 +501,10 @@ pub(crate) fn run_scoped(task: StoredTask, context: TaskContext) -> TaskFuture {
     run_scoped_raw(task, context)
 }
 
-pub(crate) async fn run_scoped_direct<I, T>(task: &T, context: TaskContext) -> Result<T::Output>
+pub(crate) async fn run_scoped_direct<I, T>(
+    task: &T,
+    context: TaskContext,
+) -> std::result::Result<T::Output, RunError<T::Error>>
 where
     T: IntoTask<I>,
 {
@@ -505,13 +514,16 @@ where
     loop {
         let scope = context.scope().child();
         let scoped_context = context.with_scope(scope.clone());
-        let result = task.run_task(&scoped_context).await;
+        let result = task
+            .run_task(&scoped_context)
+            .await
+            .map_err(RunError::App)?;
 
         let result = match result {
-            Ok(value) => scope.join().await.map(|()| value),
+            Ok(value) => scope.join().await.map_err(RunError::App).map(|()| value),
             Err(error) => {
                 scope.cancel_with(context.cancel_timeout()).await;
-                Err(error)
+                Err(RunError::Task(error))
             }
         };
 

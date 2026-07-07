@@ -1,14 +1,16 @@
-use speare::Error;
+use eyre::{Report, Result};
+use speare::RunError;
 use speare::prelude::*;
 
 #[tokio::test]
-async fn builder_channel_registration_provides_sender_and_receiver() -> Result<(), Error> {
+async fn builder_channel_registration_provides_sender_and_receiver() -> Result<(), RunError<Report>>
+{
     // Arrange
     let app = App::builder().register_channel::<i32>().build();
 
     // Act
     app.run(
-        async |sender: Sender<i32>, receiver: Receiver<i32>| -> Result<(), Error> {
+        async |sender: Sender<i32>, receiver: Receiver<i32>| -> Result<()> {
             sender.send(7).await?;
             let message = receiver.recv().await?;
 
@@ -18,17 +20,20 @@ async fn builder_channel_registration_provides_sender_and_receiver() -> Result<(
             Ok(())
         },
     )
-    .await
+    .await?;
+
+    Ok(())
 }
 
 #[tokio::test]
-async fn builder_broadcast_registration_provides_publisher_and_subscriber() -> Result<(), Error> {
+async fn builder_broadcast_registration_provides_publisher_and_subscriber()
+-> Result<(), RunError<Report>> {
     // Arrange
     let app = App::builder().register_broadcast::<i32>(4).build();
 
     // Act
     app.run(
-        async |publisher: Pub<i32>, mut subscriber: Sub<i32>| -> Result<(), Error> {
+        async |publisher: Pub<i32>, mut subscriber: Sub<i32>| -> Result<()> {
             publisher.send(11)?;
             let message = subscriber.recv().await?;
 
@@ -38,33 +43,35 @@ async fn builder_broadcast_registration_provides_publisher_and_subscriber() -> R
             Ok(())
         },
     )
-    .await
+    .await?;
+
+    Ok(())
 }
 
 #[tokio::test]
-async fn builder_query_registration_provides_querier_and_query() -> Result<(), Error> {
+async fn builder_query_registration_provides_querier_and_query() -> Result<(), RunError<Report>> {
     // Arrange
     let mut app = App::builder().register_query::<String, usize>().build();
 
     // Act
-    app.spawn(async |query: Query<String, usize>| -> Result<(), Error> {
+    app.spawn(async |query: Query<String, usize>| -> Result<()> {
         let request = query.recv().await?;
         let response = request.data.len();
         request.reply(response)?;
 
         Ok(())
     })
-    .run(
-        async |querier: Querier<String, usize>| -> Result<(), Error> {
-            let response = querier.query("speare".to_owned()).await?;
+    .run(async |querier: Querier<String, usize>| -> Result<()> {
+        let response = querier.query("speare".to_owned()).await?;
 
-            // Assert
-            assert_eq!(response, 6);
+        // Assert
+        assert_eq!(response, 6);
 
-            Ok(())
-        },
-    )
-    .await
+        Ok(())
+    })
+    .await?;
+
+    Ok(())
 }
 
 #[tokio::test]
