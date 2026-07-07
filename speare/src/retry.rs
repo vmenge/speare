@@ -119,7 +119,7 @@ impl<S> PolicyTask<S> {
 }
 
 /// Extension methods for tasks.
-pub trait TaskExt: Sized {
+pub trait TaskExt<Input>: IntoTask<Input> + Sized {
     /// Restarts the task according to `retry` when it returns an error.
     fn retry(self, retry: Retry) -> PolicyTask<Self> {
         PolicyTask {
@@ -129,7 +129,7 @@ pub trait TaskExt: Sized {
     }
 }
 
-impl<S> TaskExt for S {}
+impl<Input, S> TaskExt<Input> for S where S: IntoTask<Input> {}
 
 impl<Input, S> IntoTask<Input> for PolicyTask<S>
 where
