@@ -55,6 +55,17 @@ impl Scope {
             .spawn(StoredTask::from_task(task), self.context.clone())
     }
 
+    /// Runs one nested task inside the current task scope.
+    ///
+    /// This waits for the nested task and any children it spawns before
+    /// returning. The nested task's output and error type are preserved.
+    pub async fn run<I, T>(&self, task: T) -> std::result::Result<T::Output, RunError<T::Error>>
+    where
+        T: IntoTask<I>,
+    {
+        run_scoped_direct(&task, self.context.clone()).await
+    }
+
     /// Waits for the next child failure in this scope.
     ///
     /// This observes failures without consuming the child. The scope still waits
