@@ -230,17 +230,6 @@ impl AppBuilder {
         self
     }
 
-    /// Registers a deferred cleanup callback for the built app's first root lifecycle.
-    pub fn defer<I, T>(&mut self, task: T) -> &mut Self
-    where
-        T: IntoTask<I> + Send + Sync + 'static,
-        T::Output: Send + 'static,
-        T::Error: std::fmt::Display + std::fmt::Debug + Send + Sync + 'static,
-    {
-        self.defers.push(StoredTask::from_task(task));
-        self
-    }
-
     /// Inserts or replaces a resource in the app being built.
     pub fn override_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
         self.resources.override_with(res);
