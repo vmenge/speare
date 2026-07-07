@@ -1,34 +1,35 @@
-use speare::prelude::*;
 use speare::Error;
+use speare::prelude::*;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
+#[derive(Default)]
+struct Flag(AtomicBool);
+
+#[derive(Default)]
+struct Count(AtomicUsize);
+
 #[tokio::test]
 async fn spawn_runs_root_task_and_join_waits_for_completion() -> Result<(), Error> {
     // Arrange
-    let ran = Arc::new(AtomicBool::new(false));
     let mut app = App::builder()
         .cancel_timeout(Duration::from_millis(50))
+        .insert_resource(Flag::default())
         .build();
 
     // Act
-    app.spawn({
-        let ran = ran.clone();
-        move || {
-            let ran = ran.clone();
-
-            async move {
-                ran.store(true, Ordering::SeqCst);
-            }
-        }
+    app.spawn(async |ran: Res<Flag>| {
+        ran.0.store(true, Ordering::SeqCst);
     });
+
     app.join().await?;
 
     // Assert
-    assert!(ran.load(Ordering::SeqCst));
+    assert!(app.get::<Flag>()?.0.load(Ordering::SeqCst));
+
     Ok(())
 }
 
@@ -38,7 +39,7 @@ async fn spawn_ignores_successful_task_value() -> Result<(), Error> {
     let mut app = App::new();
 
     // Act
-    app.spawn(|| async { Ok::<_, Error>(42i32) });
+    app.spawn(async || -> Result<_, Error> { Ok(42i32) });
     let result = app.join().await;
 
     // Assert
@@ -49,92 +50,58 @@ async fn spawn_ignores_successful_task_value() -> Result<(), Error> {
 #[tokio::test]
 async fn root_task_failure_cancels_sibling_and_join_returns_error() {
     // Arrange
-    let sibling_cancelled = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(Flag::default()).build();
 
     // Act
-    app.spawn({
-        let sibling_cancelled = sibling_cancelled.clone();
-        move |scope: Scope| {
-            let sibling_cancelled = sibling_cancelled.clone();
-
-            async move {
-                scope.cancelled().await;
-                sibling_cancelled.store(true, Ordering::SeqCst);
-            }
-        }
-    });
-    app.spawn(|| async { Err::<(), _>(Error::source(std::io::Error::other("root failed"))) });
+    app.spawn(async |scope: Scope, sibling_cancelled: Res<Flag>| {
+        scope.cancelled().await;
+        sibling_cancelled.0.store(true, Ordering::SeqCst);
+    })
+    .spawn(async || -> Result<(), _> { Err("root failed") });
 
     let err = app.join().await.unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "root failed");
-    assert!(sibling_cancelled.load(Ordering::SeqCst));
+    assert!(app.get::<Flag>().unwrap().0.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
 async fn root_task_retry_is_exhausted_before_join_returns_error() {
     // Arrange
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(Count::default()).build();
+    let inc_attempts = async |attempts: Res<Count>| -> Result<(), _> {
+        attempts.0.fetch_add(1, Ordering::SeqCst);
+        Err("retry failed")
+    };
 
     // Act
-    app.spawn(
-        {
-            let attempts = attempts.clone();
-            move || {
-                let attempts = attempts.clone();
-
-                async move {
-                    attempts.fetch_add(1, Ordering::SeqCst);
-                    Err::<(), _>(Error::source(std::io::Error::other("retry failed")))
-                }
-            }
-        }
-        .retry(Retry::Max(2)),
-    );
-
+    app.spawn(inc_attempts.retry(Retry::Max(2)));
     let err = app.join().await.unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "retry failed");
-    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    assert_eq!(app.get::<Count>().unwrap().0.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
 async fn app_can_spawn_and_join_again_after_successful_join() -> Result<(), Error> {
     // Arrange
-    let runs = Arc::new(AtomicUsize::new(0));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(Count::default()).build();
+    let inc_runs = async |runs: Res<Count>| {
+        runs.0.fetch_add(1, Ordering::SeqCst);
+    };
 
     // Act
-    app.spawn({
-        let runs = runs.clone();
-        move || {
-            let runs = runs.clone();
-
-            async move {
-                runs.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-    });
+    app.spawn(inc_runs);
     app.join().await?;
 
-    app.spawn({
-        let runs = runs.clone();
-        move || {
-            let runs = runs.clone();
-
-            async move {
-                runs.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-    });
+    app.spawn(inc_runs);
     app.join().await?;
 
     // Assert
-    assert_eq!(runs.load(Ordering::SeqCst), 2);
+    assert_eq!(app.get::<Count>()?.0.load(Ordering::SeqCst), 2);
+
     Ok(())
 }
 
