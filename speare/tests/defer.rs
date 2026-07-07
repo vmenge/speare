@@ -17,7 +17,6 @@ struct Events(Mutex<Vec<&'static str>>);
 #[tokio::test]
 async fn defer_runs_after_successful_root_completion() -> Result<(), Error> {
     // Arrange
-
     let mut app = App::builder()
         .insert_resource(RootCompleted::default())
         .insert_resource(CleanedUp::default())
