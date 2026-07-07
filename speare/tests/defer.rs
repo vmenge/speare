@@ -1,138 +1,97 @@
 use speare::Error;
 use speare::prelude::*;
 use std::sync::{
-    Arc, Mutex,
+    Mutex,
     atomic::{AtomicBool, Ordering},
 };
+
+#[derive(Default)]
+struct RootCompleted(AtomicBool);
+
+#[derive(Default)]
+struct CleanedUp(AtomicBool);
+
+#[derive(Default)]
+struct Events(Mutex<Vec<&'static str>>);
 
 #[tokio::test]
 async fn defer_runs_after_successful_root_completion() -> Result<(), Error> {
     // Arrange
-    let root_completed = Arc::new(AtomicBool::new(false));
-    let cleaned_up = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
 
-    app.defer({
-        let root_completed = root_completed.clone();
-        let cleaned_up = cleaned_up.clone();
-
-        move || {
-            let root_completed = root_completed.clone();
-            let cleaned_up = cleaned_up.clone();
-
-            async move {
-                if root_completed.load(Ordering::SeqCst) {
-                    cleaned_up.store(true, Ordering::SeqCst);
-                }
-            }
-        }
-    });
+    let mut app = App::builder()
+        .insert_resource(RootCompleted::default())
+        .insert_resource(CleanedUp::default())
+        .build();
 
     // Act
-    app.spawn({
-        let root_completed = root_completed.clone();
-
-        move || {
-            let root_completed = root_completed.clone();
-
-            async move {
-                root_completed.store(true, Ordering::SeqCst);
-            }
+    app.defer(async |rc: Res<RootCompleted>, cu: Res<CleanedUp>| {
+        if rc.0.load(Ordering::SeqCst) {
+            cu.0.store(true, Ordering::SeqCst);
         }
-    });
-    app.join().await?;
+    })
+    .spawn(async |rc: Res<RootCompleted>| {
+        rc.0.store(true, Ordering::SeqCst);
+    })
+    .join()
+    .await?;
 
     // Assert
-    assert!(cleaned_up.load(Ordering::SeqCst));
+    assert!(app.get::<CleanedUp>()?.0.load(Ordering::SeqCst));
+
     Ok(())
 }
 
 #[tokio::test]
 async fn defer_supports_heterogeneous_cleanup_callbacks() -> Result<(), Error> {
     // Arrange
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let mut app = App::new();
-
-    app.defer({
-        let events = events.clone();
-
-        move || {
-            let events = events.clone();
-
-            async move {
-                events.lock().unwrap().push("first");
-            }
-        }
-    });
-
-    app.defer({
-        let events = events.clone();
-
-        move || {
-            let events = events.clone();
-
-            async move {
-                events.lock().unwrap().push("second");
-                Ok::<_, Error>(())
-            }
-        }
-    });
+    let mut app = App::builder().insert_resource(Events::default()).build();
 
     // Act
-    app.spawn(|| async {});
-    app.join().await?;
+    app.defer(async |events: Res<Events>| {
+        events.0.lock().unwrap().push("first");
+    })
+    .defer(async |events: Res<Events>| {
+        events.0.lock().unwrap().push("second");
+        Ok::<_, Error>(())
+    })
+    .join()
+    .await?;
 
     // Assert
-    assert_eq!(*events.lock().unwrap(), ["first", "second"]);
+    assert_eq!(*app.get::<Events>()?.0.lock().unwrap(), ["first", "second"]);
+
     Ok(())
 }
 
 #[tokio::test]
 async fn defer_runs_after_root_failure() {
     // Arrange
-    let cleaned_up = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
-
-    app.defer({
-        let cleaned_up = cleaned_up.clone();
-
-        move || {
-            let cleaned_up = cleaned_up.clone();
-
-            async move {
-                cleaned_up.store(true, Ordering::SeqCst);
-            }
-        }
-    });
+    let mut app = App::builder().insert_resource(CleanedUp::default()).build();
 
     // Act
-    app.spawn(|| async { Err::<(), _>(Error::source(std::io::Error::other("root failed"))) });
-    let err = app.join().await.unwrap_err();
+    let err = app
+        .defer(async |cleaned_up: Res<CleanedUp>| {
+            cleaned_up.0.store(true, Ordering::SeqCst);
+        })
+        .spawn(async || -> Result<(), _> { Err("root failed") })
+        .join()
+        .await
+        .unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "root failed");
-    assert!(cleaned_up.load(Ordering::SeqCst));
+    assert!(app.get::<CleanedUp>().unwrap().0.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
 async fn defer_runs_after_shutdown() -> Result<(), Error> {
     // Arrange
-    let cleaned_up = Arc::new(AtomicBool::new(false));
-    let mut app = App::new();
+    let mut app = App::builder().insert_resource(CleanedUp::default()).build();
 
-    app.defer({
-        let cleaned_up = cleaned_up.clone();
-
-        move || {
-            let cleaned_up = cleaned_up.clone();
-
-            async move {
-                cleaned_up.store(true, Ordering::SeqCst);
-            }
-        }
-    });
-
-    app.spawn(|scope: Scope| async move {
+    app.defer(async |cleaned_up: Res<CleanedUp>| {
+        cleaned_up.0.store(true, Ordering::SeqCst);
+    })
+    .spawn(|scope: Scope| async move {
         scope.cancelled().await;
     });
 
@@ -141,7 +100,7 @@ async fn defer_runs_after_shutdown() -> Result<(), Error> {
     app.join().await?;
 
     // Assert
-    assert!(cleaned_up.load(Ordering::SeqCst));
+    assert!(app.get::<CleanedUp>()?.0.load(Ordering::SeqCst));
     Ok(())
 }
 
@@ -150,11 +109,13 @@ async fn defer_error_surfaces_when_root_tasks_succeed() {
     // Arrange
     let mut app = App::new();
 
-    app.defer(|| async { Err::<(), _>(Error::source(std::io::Error::other("defer failed"))) });
-
     // Act
-    app.spawn(|| async {});
-    let err = app.join().await.unwrap_err();
+    let err = app
+        .defer(async || -> Result<(), _> { Err("defer failed") })
+        .spawn(|| async {})
+        .join()
+        .await
+        .unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "defer failed");
@@ -165,11 +126,13 @@ async fn root_failure_takes_precedence_over_defer_failure() {
     // Arrange
     let mut app = App::new();
 
-    app.defer(|| async { Err::<(), _>(Error::source(std::io::Error::other("defer failed"))) });
-
     // Act
-    app.spawn(|| async { Err::<(), _>(Error::source(std::io::Error::other("root failed"))) });
-    let err = app.join().await.unwrap_err();
+    let err = app
+        .defer(async || -> Result<(), _> { Err("defer failed") })
+        .spawn(async || -> Result<(), _> { Err("root failed") })
+        .join()
+        .await
+        .unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "root failed");
