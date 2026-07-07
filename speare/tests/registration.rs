@@ -1,7 +1,8 @@
 use speare::prelude::*;
+use speare::Error;
 
 #[tokio::test]
-async fn builder_channel_registration_provides_sender_and_receiver() -> Result<()> {
+async fn builder_channel_registration_provides_sender_and_receiver() -> Result<(), Error> {
     // Arrange
     let app = App::builder().register_channel::<i32>().build();
 
@@ -18,7 +19,7 @@ async fn builder_channel_registration_provides_sender_and_receiver() -> Result<(
 }
 
 #[tokio::test]
-async fn builder_broadcast_registration_provides_publisher_and_subscriber() -> Result<()> {
+async fn builder_broadcast_registration_provides_publisher_and_subscriber() -> Result<(), Error> {
     // Arrange
     let app = App::builder().register_broadcast::<i32>(4).build();
 
@@ -35,7 +36,7 @@ async fn builder_broadcast_registration_provides_publisher_and_subscriber() -> R
 }
 
 #[tokio::test]
-async fn builder_query_registration_provides_querier_and_query_worker() -> Result<()> {
+async fn builder_query_registration_provides_querier_and_query_worker() -> Result<(), Error> {
     // Arrange
     let app = App::builder().register_query::<String, usize>().build();
 

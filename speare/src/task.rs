@@ -16,10 +16,24 @@ pub(crate) struct StoredTask {
 }
 
 impl StoredTask {
-    pub(crate) fn new(run: Arc<dyn Fn(&TaskContext) -> TaskFuture + Send + Sync>) -> Self {
+    pub(crate) fn from_task<I, T>(task: T) -> Self
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+    {
+        let policy = TaskPolicy {
+            restart: task.restart_policy(),
+        };
+        let task = Arc::new(task);
+
         Self {
-            run,
-            policy: TaskPolicy::default(),
+            run: Arc::new(move |context| {
+                let task = task.clone();
+                let context = context.clone();
+
+                Box::pin(async move { task.run_task(&context).await.map(|_| ()) })
+            }),
+            policy,
         }
     }
 
@@ -31,10 +45,6 @@ impl StoredTask {
         self.policy
     }
 
-    pub(crate) fn with_policy(mut self, policy: TaskPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
 }
 
 #[derive(Clone)]
@@ -102,8 +112,6 @@ pub trait IntoTask<Input> {
     fn restart_policy(&self) -> RestartPolicy {
         RestartPolicy::default()
     }
-
-    fn into_task(self) -> StoredTask;
 }
 
 macro_rules! impl_task {
@@ -132,22 +140,6 @@ macro_rules! impl_task {
                 }
             }
 
-            fn into_task(self) -> StoredTask {
-                StoredTask::new(Arc::new(move |context| {
-                    $(
-                    let $params = match $params::extract(context) {
-                        Ok(param) => param,
-                        Err(err) => {
-                            let future: TaskFuture = Box::pin(async move { Err(err) });
-                            return future;
-                        }
-                    };
-                    )*
-
-                    let future = self($($params),*);
-                    Box::pin(async move { future.await.into_task_result().map(|_| ()) })
-                }))
-            }
         }
     };
 }

@@ -1,4 +1,4 @@
-use crate::task::{IntoTask, StoredTask};
+use crate::task::IntoTask;
 use std::time::Duration;
 
 /// Controls whether a failed task should be restarted.
@@ -146,9 +146,5 @@ where
 
     fn restart_policy(&self) -> RestartPolicy {
         self.policy.restart
-    }
-
-    fn into_task(self) -> StoredTask {
-        self.task.into_task().with_policy(self.policy)
     }
 }

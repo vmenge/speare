@@ -1,7 +1,7 @@
-use speare::{App, Backoff, Error, Result, Retry, Schedule, TaskExt};
+use speare::{App, Backoff, Error, Retry, TaskExt};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 #[test]
@@ -20,8 +20,7 @@ async fn never_retries_failed_task() {
     let task_attempts = attempts.clone();
 
     let err = App::new()
-        .add_task(
-            Schedule::Start,
+        .run(
             (move || {
                 let task_attempts = task_attempts.clone();
 
@@ -32,7 +31,6 @@ async fn never_retries_failed_task() {
             })
             .retry(Retry::Never),
         )
-        .start()
         .await
         .unwrap_err();
 
@@ -46,8 +44,7 @@ async fn max_retries_failed_task() {
     let task_attempts = attempts.clone();
 
     let err = App::new()
-        .add_task(
-            Schedule::Start,
+        .run(
             (move || {
                 let task_attempts = task_attempts.clone();
 
@@ -58,7 +55,6 @@ async fn max_retries_failed_task() {
             })
             .retry(Retry::Max(2)),
         )
-        .start()
         .await
         .unwrap_err();
 
@@ -67,13 +63,12 @@ async fn max_retries_failed_task() {
 }
 
 #[tokio::test]
-async fn always_retries_until_success() -> Result<()> {
+async fn always_retries_until_success() -> Result<(), Error> {
     let attempts = Arc::new(AtomicUsize::new(0));
     let task_attempts = attempts.clone();
 
     App::new()
-        .add_task(
-            Schedule::Start,
+        .run(
             (move || {
                 let task_attempts = task_attempts.clone();
 
@@ -89,7 +84,6 @@ async fn always_retries_until_success() -> Result<()> {
             })
             .retry(Retry::Always),
         )
-        .start()
         .await?;
 
     assert_eq!(attempts.load(Ordering::SeqCst), 3);

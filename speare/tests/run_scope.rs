@@ -1,4 +1,5 @@
 use speare::prelude::*;
+use speare::Error;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -7,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 #[tokio::test]
-async fn run_waits_for_scoped_children_before_returning() -> Result<()> {
+async fn run_waits_for_scoped_children_before_returning() -> Result<(), Error> {
     // Arrange
     let child_ran = Arc::new(AtomicBool::new(false));
     let app = App::new();
@@ -83,7 +84,7 @@ async fn run_parent_failure_cancels_scoped_children() {
 }
 
 #[tokio::test]
-async fn scope_spawn_ignores_successful_child_task_value() -> Result<()> {
+async fn scope_spawn_ignores_successful_child_task_value() -> Result<(), Error> {
     // Arrange
     let app = App::new();
 
@@ -100,7 +101,7 @@ async fn scope_spawn_ignores_successful_child_task_value() -> Result<()> {
 }
 
 #[tokio::test]
-async fn run_executes_independently_of_root_tasks() -> Result<()> {
+async fn run_executes_independently_of_root_tasks() -> Result<(), Error> {
     // Arrange
     let root_started = Arc::new(Notify::new());
     let run_completed = Arc::new(AtomicBool::new(false));
@@ -142,7 +143,7 @@ async fn run_executes_independently_of_root_tasks() -> Result<()> {
 }
 
 #[tokio::test]
-async fn run_extracts_scope_and_shutdown_without_resources() -> Result<()> {
+async fn run_extracts_scope_and_shutdown_without_resources() -> Result<(), Error> {
     // Arrange
     let child_cancelled = Arc::new(AtomicBool::new(false));
     let app = App::new();

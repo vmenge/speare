@@ -4,17 +4,15 @@ use crate::{
     scope::{TaskScope, run_scoped, run_scoped_direct},
     task::{IntoTask, StoredTask, TaskContext},
 };
-use std::{collections::HashMap, mem, time::Duration};
+use std::{mem, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-/// An application composed from resources and scheduled tasks.
+/// Runtime owner for resources, root tasks, and deferred cleanup.
 ///
-/// `App` is configured during startup. Calling `start`, `spawn`, or `run`
-/// executes tasks against a cloned snapshot of the app's current resources and
-/// tasks. Deferred cleanup callbacks registered with `defer` run when `join`
-/// resolves the current root task lifecycle.
+/// `App` is built after setup. It can run one-off tasks, spawn root tasks,
+/// request app-wide shutdown, join the current root task set, and run deferred
+/// cleanup callbacks.
 pub struct App {
-    tasks: HashMap<Schedule, Vec<StoredTask>>,
     defers: Vec<StoredTask>,
     resources: Resources,
     config: AppConfig,
@@ -24,7 +22,6 @@ pub struct App {
 
 /// Builds an app by collecting setup-time resources, config, and plugins.
 pub struct AppBuilder {
-    tasks: HashMap<Schedule, Vec<StoredTask>>,
     defers: Vec<StoredTask>,
     resources: Resources,
     config: AppConfig,
@@ -43,14 +40,6 @@ impl Default for AppConfig {
     }
 }
 
-/// A handle to an app running in a background Tokio task.
-///
-/// Use `join` to wait for the app to finish and observe its result, or `abort`
-/// to cancel the background task.
-pub struct AppHandle {
-    task: tokio::task::JoinHandle<Result<()>>,
-}
-
 /// Adds setup-time behavior to an app builder.
 pub trait Plugin {
     fn setup(&self, _builder: &mut AppBuilder) {}
@@ -63,27 +52,6 @@ where
     fn setup(&self, builder: &mut AppBuilder) {
         (*self).setup(builder);
     }
-}
-
-/// A named phase in the app lifecycle.
-///
-/// Tasks are registered into schedules with `App::add_task`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Schedule {
-    /// Runs once before work tasks are spawned.
-    ///
-    /// Tasks in this schedule run sequentially.
-    Start,
-    /// Runs after `Start` and before `Shutdown`.
-    ///
-    /// Tasks in this schedule are spawned concurrently and awaited together.
-    Work,
-    /// Runs when the app is exiting.
-    ///
-    /// Shutdown tasks run after normal completion, after shutdown is
-    /// requested, and after startup or task errors. Every shutdown task is
-    /// attempted before the app returns.
-    Shutdown,
 }
 
 impl App {
@@ -129,7 +97,18 @@ impl App {
 
     /// Waits for all currently spawned root tasks to complete.
     pub async fn join(&mut self) -> Result<()> {
-        let root_result = self.root.join_propagating(self.config.cancel_timeout).await;
+        let root = self.root.clone();
+        let cancel_timeout = self.config.cancel_timeout;
+        let mut join = tokio::spawn(async move { root.join_propagating(cancel_timeout).await });
+
+        let root_result = tokio::select! {
+            result = &mut join => result.map_err(Error::source)?,
+            _ = self.shutdown.cancelled() => {
+                self.root.cancel_with(cancel_timeout).await;
+                join.await.map_err(Error::source)?
+            }
+        };
+
         let defer_result = self.run_defers().await;
         self.reset_lifecycle();
 
@@ -175,24 +154,18 @@ impl App {
     }
 
     /// Registers a deferred cleanup callback for the current root lifecycle.
-    pub fn defer<I>(&mut self, task: impl IntoTask<I>) -> &mut Self {
-        self.defers.push(task.into_task());
+    pub fn defer<I, T>(&mut self, task: T) -> &mut Self
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+    {
+        self.defers.push(StoredTask::from_task(task));
         self
-    }
-
-    /// Starts the app and waits for it to finish.
-    ///
-    /// This runs the `Start` schedule, then the `Work` schedule, then the
-    /// `Shutdown` schedule. Like `spawn`, it executes a snapshot of the app's
-    /// tasks and resources.
-    pub async fn start(&self) -> Result<()> {
-        self.runtime().start().await
     }
 
     /// Runs one task against the app's resources.
     ///
-    /// This does not add the task to a schedule and does not run any
-    /// scheduled tasks. It is useful for tests and one-off task execution.
+    /// This executes independently of the root task set.
     pub async fn run<I, T>(&self, task: T) -> Result<T::Output>
     where
         T: IntoTask<I>,
@@ -205,26 +178,6 @@ impl App {
         run_scoped_direct(&task, context).await
     }
 
-    fn runtime(&self) -> Runtime {
-        Runtime {
-            tasks: self.tasks.clone(),
-            resources: self.resources.clone(),
-            config: self.config.clone(),
-        }
-    }
-
-    /// Adds a task to one of the app schedules.
-    ///
-    /// Tasks in `Start` and `Shutdown` run sequentially. Tasks in `Work`
-    /// are spawned concurrently and awaited before shutdown begins.
-    pub fn add_task<I>(&mut self, schedule: Schedule, task: impl IntoTask<I>) -> &mut Self {
-        self.tasks
-            .entry(schedule)
-            .or_default()
-            .push(task.into_task());
-        self
-    }
-
     /// Gets a resource from the app.
     ///
     /// Returns an error if the resource has not been inserted.
@@ -234,27 +187,6 @@ impl App {
     {
         self.resources.get::<R>().map(Res::new)
     }
-
-    /// Inserts or replaces a resource in the app.
-    ///
-    /// This is intended for tests and configuration overrides. Unlike
-    /// `insert_resource`, this does not panic when a resource of the same type
-    /// already exists.
-    ///
-    /// Panics if resources have already been shared with a running task and
-    /// the resource store can no longer be mutated.
-    pub fn override_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
-        self.resources.override_with(res);
-        self
-    }
-
-    /// Inserts a resource into the app.
-    ///
-    /// Panics if a resource of the same type has already been inserted.
-    pub fn insert_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
-        self.resources.insert(res);
-        self
-    }
 }
 
 impl AppBuilder {
@@ -262,7 +194,6 @@ impl AppBuilder {
     /// Creates an empty app builder.
     pub fn new() -> Self {
         Self {
-            tasks: HashMap::new(),
             defers: Vec::new(),
             resources: Resources::default(),
             config: AppConfig::default(),
@@ -274,7 +205,6 @@ impl AppBuilder {
     /// The builder is drained, so calling `build` again creates an empty app.
     pub fn build(&mut self) -> App {
         App {
-            tasks: mem::take(&mut self.tasks),
             defers: mem::take(&mut self.defers),
             resources: mem::take(&mut self.resources),
             config: mem::take(&mut self.config),
@@ -299,8 +229,12 @@ impl AppBuilder {
     }
 
     /// Registers a deferred cleanup callback for the built app's first root lifecycle.
-    pub fn defer<I>(&mut self, task: impl IntoTask<I>) -> &mut Self {
-        self.defers.push(task.into_task());
+    pub fn defer<I, T>(&mut self, task: T) -> &mut Self
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+    {
+        self.defers.push(StoredTask::from_task(task));
         self
     }
 
@@ -320,127 +254,6 @@ impl AppBuilder {
 
     pub(crate) fn resources_mut(&mut self) -> &mut Resources {
         &mut self.resources
-    }
-}
-
-impl AppHandle {
-    /// Waits for the app task to finish.
-    ///
-    /// Returns the app result, or a task join error if the background task
-    /// panicked or was cancelled.
-    pub async fn join(self) -> Result<()> {
-        self.task.await.map_err(Error::source)?
-    }
-
-    /// Cancels the background app task.
-    pub fn abort(&self) {
-        self.task.abort();
-    }
-}
-
-struct Runtime {
-    tasks: HashMap<Schedule, Vec<StoredTask>>,
-    resources: Resources,
-    config: AppConfig,
-}
-
-impl Runtime {
-    fn spawn(self) -> AppHandle {
-        AppHandle {
-            task: tokio::spawn(async move { self.start().await }),
-        }
-    }
-
-    async fn start(self) -> Result<()> {
-        let shutdown = CancellationToken::new();
-
-        let primary_error = match self.run_start(shutdown.clone()).await {
-            Ok(()) if shutdown.is_cancelled() => None,
-            Ok(()) => self.run_tasks(shutdown.clone()).await.err(),
-            Err(error) => Some(error),
-        };
-
-        let shutdown_error = self.run_shutdown(shutdown).await.err();
-
-        match (primary_error, shutdown_error) {
-            (Some(error), _) => Err(error),
-            (None, Some(error)) => Err(error),
-            (None, None) => Ok(()),
-        }
-    }
-
-    async fn run_start(&self, shutdown: CancellationToken) -> Result<()> {
-        if let Some(tasks) = self.tasks.get(&Schedule::Start) {
-            let context = TaskContext::root(
-                self.resources.clone(),
-                self.config.cancel_timeout,
-                shutdown.clone(),
-            );
-
-            for task in tasks {
-                run_scoped(task.clone(), context.clone()).await?;
-
-                if shutdown.is_cancelled() {
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn run_tasks(&self, shutdown: CancellationToken) -> Result<()> {
-        if let Some(tasks) = self.tasks.get(&Schedule::Work) {
-            let root = TaskScope::default();
-            let context = TaskContext::root(
-                self.resources.clone(),
-                self.config.cancel_timeout,
-                shutdown.clone(),
-            )
-            .with_scope(root.clone());
-
-            for task in tasks {
-                root.spawn_propagating(task.clone(), context.clone());
-            }
-
-            let join_scope = root.clone();
-            let mut join = tokio::spawn(async move { join_scope.join().await });
-
-            tokio::select! {
-                result = &mut join => result.map_err(Error::source)??,
-                _ = shutdown.cancelled() => {
-                    root.cancel_with(self.config.cancel_timeout).await;
-                    join.await.map_err(Error::source)??;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn run_shutdown(&self, shutdown: CancellationToken) -> Result<()> {
-        let mut first_error = None;
-
-        if let Some(tasks) = self.tasks.get(&Schedule::Shutdown) {
-            let context = TaskContext::root(
-                self.resources.clone(),
-                self.config.cancel_timeout,
-                shutdown,
-            );
-
-            for task in tasks {
-                if let Err(error) = run_scoped(task.clone(), context.clone()).await
-                    && first_error.is_none()
-                {
-                    first_error = Some(error);
-                }
-            }
-        }
-
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
     }
 }
 

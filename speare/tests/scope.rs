@@ -1,4 +1,5 @@
 use speare::prelude::*;
+use speare::Error;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -9,12 +10,12 @@ use tokio::{
 };
 
 #[tokio::test]
-async fn spawned_child_runs_before_parent_completes() -> Result<()> {
+async fn spawned_child_runs_before_parent_completes() -> Result<(), Error> {
     let ran = Arc::new(AtomicBool::new(false));
     let child_ran = ran.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let child_ran = child_ran.clone();
 
             async move {
@@ -27,7 +28,6 @@ async fn spawned_child_runs_before_parent_completes() -> Result<()> {
                 });
             }
         })
-        .start()
         .await?;
 
     assert!(ran.load(Ordering::SeqCst));
@@ -35,12 +35,12 @@ async fn spawned_child_runs_before_parent_completes() -> Result<()> {
 }
 
 #[tokio::test]
-async fn child_observes_child_cancel() -> Result<()> {
+async fn child_observes_child_cancel() -> Result<(), Error> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let child_cancelled = cancelled.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let child_cancelled = child_cancelled.clone();
 
             async move {
@@ -56,7 +56,6 @@ async fn child_observes_child_cancel() -> Result<()> {
                 child.cancel();
             }
         })
-        .start()
         .await?;
 
     assert!(cancelled.load(Ordering::SeqCst));
@@ -64,12 +63,12 @@ async fn child_observes_child_cancel() -> Result<()> {
 }
 
 #[tokio::test]
-async fn child_observes_scope_cancel_all() -> Result<()> {
+async fn child_observes_scope_cancel_all() -> Result<(), Error> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let child_cancelled = cancelled.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let child_cancelled = child_cancelled.clone();
 
             async move {
@@ -85,7 +84,6 @@ async fn child_observes_scope_cancel_all() -> Result<()> {
                 scope.cancel_all();
             }
         })
-        .start()
         .await?;
 
     assert!(cancelled.load(Ordering::SeqCst));
@@ -93,13 +91,13 @@ async fn child_observes_scope_cancel_all() -> Result<()> {
 }
 
 #[tokio::test]
-async fn child_cancel_with_aborts_child_that_ignores_cancellation() -> Result<()> {
+async fn child_cancel_with_aborts_child_that_ignores_cancellation() -> Result<(), Error> {
     let started = Arc::new(Notify::new());
     let aborted = Arc::new(Notify::new());
     let task_aborted = aborted.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let started = started.clone();
             let aborted = task_aborted.clone();
 
@@ -129,7 +127,6 @@ async fn child_cancel_with_aborts_child_that_ignores_cancellation() -> Result<()
                 child.cancel_with(Duration::from_millis(10)).await;
             }
         })
-        .start()
         .await?;
 
     timeout(Duration::from_secs(1), aborted.notified())
@@ -143,9 +140,10 @@ async fn parent_failure_cancels_child_before_abort() {
     let cancelled = Arc::new(AtomicBool::new(false));
     let child_cancelled = cancelled.clone();
 
-    let err = App::new()
+    let err = App::builder()
         .cancel_timeout(Duration::from_secs(1))
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .build()
+        .run(move |scope: Scope| {
             let child_cancelled = child_cancelled.clone();
 
             async move {
@@ -161,7 +159,6 @@ async fn parent_failure_cancels_child_before_abort() {
                 Err::<(), _>(Error::source(std::io::Error::other("parent failed")))
             }
         })
-        .start()
         .await
         .unwrap_err();
 
@@ -170,12 +167,12 @@ async fn parent_failure_cancels_child_before_abort() {
 }
 
 #[tokio::test]
-async fn cancellation_cascades_to_nested_children() -> Result<()> {
+async fn cancellation_cascades_to_nested_children() -> Result<(), Error> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let grandchild_cancelled = cancelled.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let grandchild_cancelled = grandchild_cancelled.clone();
 
             async move {
@@ -199,7 +196,6 @@ async fn cancellation_cascades_to_nested_children() -> Result<()> {
                 child.cancel();
             }
         })
-        .start()
         .await?;
 
     assert!(cancelled.load(Ordering::SeqCst));
@@ -207,40 +203,37 @@ async fn cancellation_cascades_to_nested_children() -> Result<()> {
 }
 
 #[tokio::test]
-async fn child_failure_does_not_fail_parent_scope() -> Result<()> {
+async fn child_failure_does_not_fail_parent_scope() -> Result<(), Error> {
     App::new()
-        .add_task(Schedule::Start, |scope: Scope| async move {
+        .run(|scope: Scope| async move {
             scope.spawn(|| async {
                 Err::<(), _>(Error::source(std::io::Error::other("child failed")))
             });
         })
-        .start()
         .await?;
 
     Ok(())
 }
 
 #[tokio::test]
-async fn child_handle_can_watch_its_failure() -> Result<()> {
+async fn child_handle_can_watch_its_failure() -> Result<(), Error> {
     let failure_seen = Arc::new(AtomicBool::new(false));
     let child_failure_seen = failure_seen.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let child_failure_seen = child_failure_seen.clone();
 
             async move {
-                let child = scope
-                    .spawn(|| async {
-                        Err::<(), _>(Error::source(std::io::Error::other("child failed")))
-                    });
+                let child = scope.spawn(|| async {
+                    Err::<(), _>(Error::source(std::io::Error::other("child failed")))
+                });
 
                 let error = child.failed().await;
                 assert_eq!(error.to_string(), "child failed");
                 child_failure_seen.store(true, Ordering::SeqCst);
             }
         })
-        .start()
         .await?;
 
     assert!(failure_seen.load(Ordering::SeqCst));
@@ -248,12 +241,12 @@ async fn child_handle_can_watch_its_failure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn scope_can_watch_next_child_failure() -> Result<()> {
+async fn scope_can_watch_next_child_failure() -> Result<(), Error> {
     let failure_seen = Arc::new(AtomicBool::new(false));
     let scope_failure_seen = failure_seen.clone();
 
     App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let scope_failure_seen = scope_failure_seen.clone();
 
             async move {
@@ -266,7 +259,6 @@ async fn scope_can_watch_next_child_failure() -> Result<()> {
                 scope_failure_seen.store(true, Ordering::SeqCst);
             }
         })
-        .start()
         .await?;
 
     assert!(failure_seen.load(Ordering::SeqCst));
@@ -276,7 +268,7 @@ async fn scope_can_watch_next_child_failure() -> Result<()> {
 #[tokio::test]
 async fn parent_can_explicitly_fail_from_child_failure() {
     let err = App::new()
-        .add_task(Schedule::Start, |scope: Scope| async move {
+        .run(|scope: Scope| async move {
             scope.spawn(|| async {
                 Err::<(), _>(Error::source(std::io::Error::other("child failed")))
             });
@@ -284,7 +276,6 @@ async fn parent_can_explicitly_fail_from_child_failure() {
             let failure = scope.next_failure().await;
             Err::<(), _>(failure.error)
         })
-        .start()
         .await
         .unwrap_err();
 
@@ -299,7 +290,7 @@ async fn parent_failure_aborts_spawned_children() {
     let child_aborted = aborted.clone();
 
     let err = App::new()
-        .add_task(Schedule::Start, move |scope: Scope| {
+        .run(move |scope: Scope| {
             let child_started = child_started.clone();
             let child_aborted = child_aborted.clone();
 
@@ -330,7 +321,6 @@ async fn parent_failure_aborts_spawned_children() {
                 Err::<(), _>(Error::source(std::io::Error::other("parent failed")))
             }
         })
-        .start()
         .await
         .unwrap_err();
 
@@ -341,7 +331,7 @@ async fn parent_failure_aborts_spawned_children() {
 }
 
 #[tokio::test]
-async fn retry_respawns_children() -> Result<()> {
+async fn retry_respawns_children() -> Result<(), Error> {
     let attempts = Arc::new(AtomicUsize::new(0));
     let child_runs = Arc::new(AtomicUsize::new(0));
 
@@ -349,8 +339,7 @@ async fn retry_respawns_children() -> Result<()> {
     let task_child_runs = child_runs.clone();
 
     App::new()
-        .add_task(
-            Schedule::Start,
+        .run(
             (move |scope: Scope| {
                 let task_attempts = task_attempts.clone();
                 let task_child_runs = task_child_runs.clone();
@@ -374,7 +363,6 @@ async fn retry_respawns_children() -> Result<()> {
             })
             .retry(Retry::Max(1)),
         )
-        .start()
         .await?;
 
     assert_eq!(attempts.load(Ordering::SeqCst), 2);

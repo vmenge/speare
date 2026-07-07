@@ -53,25 +53,6 @@ impl Resources {
         Arc::make_mut(&mut self.0).insert(TypeId::of::<R>(), Arc::new(res));
     }
 
-    /// Gets mutable access to a resource.
-    ///
-    /// Panics if the resource is not registered or if resources have already
-    /// been shared with running tasks.
-    pub fn get_mut<R>(&mut self) -> &mut R
-    where
-        R: Send + Sync + 'static,
-    {
-        let resources = Arc::get_mut(&mut self.0).expect("resources are already shared");
-        let resource = resources
-            .get_mut(&TypeId::of::<R>())
-            .unwrap_or_else(|| panic!("{} is not registered", type_name::<R>()));
-
-        Arc::get_mut(resource)
-            .unwrap()
-            .downcast_mut::<R>()
-            .unwrap()
-    }
-
     /// Gets mutable access to a resource, inserting it first if it is missing.
     ///
     /// Panics if resources have already been shared with running tasks.

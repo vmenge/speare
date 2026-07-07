@@ -1,4 +1,5 @@
 use speare::prelude::*;
+use speare::Error;
 use std::fmt;
 
 #[derive(Debug)]
@@ -11,7 +12,7 @@ impl fmt::Display for ReportLikeError {
 }
 
 #[tokio::test]
-async fn run_returns_successful_task_value() -> Result<()> {
+async fn run_returns_successful_task_value() -> Result<(), Error> {
     // Arrange
     let app = App::new();
 
@@ -24,7 +25,7 @@ async fn run_returns_successful_task_value() -> Result<()> {
 }
 
 #[tokio::test]
-async fn run_still_accepts_unit_task_output() -> Result<()> {
+async fn run_still_accepts_unit_task_output() -> Result<(), Error> {
     // Arrange
     let app = App::new();
 

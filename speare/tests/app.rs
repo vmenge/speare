@@ -1,3 +1,4 @@
+use speare::Error;
 use speare::prelude::*;
 
 struct InsertI32Plugin(i32);
@@ -9,7 +10,7 @@ impl Plugin for InsertI32Plugin {
 }
 
 #[test]
-fn builder_builds_app_with_inserted_resource() -> Result<()> {
+fn builder_builds_app_with_inserted_resource() -> Result<(), Error> {
     // Arrange
     let app = App::builder().insert_resource(5i32).build();
 
@@ -22,7 +23,7 @@ fn builder_builds_app_with_inserted_resource() -> Result<()> {
 }
 
 #[test]
-fn builder_override_resource_replaces_existing_resource() -> Result<()> {
+fn builder_override_resource_replaces_existing_resource() -> Result<(), Error> {
     // Arrange
     let app = App::builder()
         .insert_resource(5i32)
@@ -50,7 +51,7 @@ fn app_new_builds_empty_runtime_app() {
 }
 
 #[test]
-fn builder_add_plugin_runs_setup_before_build() -> Result<()> {
+fn builder_add_plugin_runs_setup_before_build() -> Result<(), Error> {
     // Arrange
     let plugin = InsertI32Plugin(42);
 
@@ -67,9 +68,7 @@ fn builder_add_plugin_runs_setup_before_build() -> Result<()> {
 async fn spawn_join_returns_task_error() {
     // Arrange / Act
     let mut app = App::new();
-    app.spawn(|| async {
-        Err::<(), _>(Error::source(std::io::Error::other("failed")))
-    });
+    app.spawn(async || -> Result<(), String> { Err("failed".into()) });
 
     let err = app.join().await.unwrap_err();
 
@@ -78,7 +77,7 @@ async fn spawn_join_returns_task_error() {
 }
 
 #[tokio::test]
-async fn app_can_be_accessed_after_spawn() -> Result<()> {
+async fn app_can_be_accessed_after_spawn() -> Result<(), Error> {
     // Arrange
     let mut app = App::builder().insert_resource(5i32).build();
 
@@ -92,12 +91,12 @@ async fn app_can_be_accessed_after_spawn() -> Result<()> {
 }
 
 #[tokio::test]
-async fn run_executes_one_task_with_app_resources() -> Result<()> {
+async fn run_executes_one_task_with_app_resources() -> Result<(), Error> {
     // Arrange
     let app = App::builder().insert_resource(5i32).build();
 
     // Act
-    app.run(|value: Res<i32>| async move {
+    app.run(async |value: Res<i32>| {
         // Assert
         assert_eq!(*value, 5);
     })
@@ -109,10 +108,7 @@ async fn run_executes_one_task_with_app_resources() -> Result<()> {
 #[tokio::test]
 async fn run_returns_extraction_error() {
     // Arrange / Act
-    let err = App::new()
-        .run(|_: Res<i32>| async {})
-        .await
-        .unwrap_err();
+    let err = App::new().run(async |_: Res<i32>| {}).await.unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "i32 is not registered");

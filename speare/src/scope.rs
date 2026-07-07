@@ -41,10 +41,14 @@ impl Scope {
     ///
     /// If the current task fails, all children are aborted. Child failures
     /// can be observed with `Child::failed` or `Scope::next_failure`.
-    pub fn spawn<I>(&self, task: impl IntoTask<I>) -> Child {
+    pub fn spawn<I, T>(&self, task: T) -> Child
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+    {
         self.context
             .scope()
-            .spawn(task.into_task(), self.context.clone())
+            .spawn(StoredTask::from_task(task), self.context.clone())
     }
 
     /// Waits for the next child failure in this scope.
@@ -249,10 +253,6 @@ impl TaskScope {
 
     pub(crate) fn spawn(&self, task: StoredTask, context: TaskContext) -> Child {
         self.spawn_with(task, context, false)
-    }
-
-    pub(crate) fn spawn_propagating(&self, task: StoredTask, context: TaskContext) -> Child {
-        self.spawn_with(task, context, true)
     }
 
     pub(crate) fn spawn_direct<I, T>(&self, task: T, context: TaskContext) -> Child

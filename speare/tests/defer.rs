@@ -1,3 +1,4 @@
+use speare::Error;
 use speare::prelude::*;
 use std::sync::{
     Arc, Mutex,
@@ -5,7 +6,7 @@ use std::sync::{
 };
 
 #[tokio::test]
-async fn defer_runs_after_successful_root_completion() -> Result<()> {
+async fn defer_runs_after_successful_root_completion() -> Result<(), Error> {
     // Arrange
     let root_completed = Arc::new(AtomicBool::new(false));
     let cleaned_up = Arc::new(AtomicBool::new(false));
@@ -47,7 +48,7 @@ async fn defer_runs_after_successful_root_completion() -> Result<()> {
 }
 
 #[tokio::test]
-async fn defer_supports_heterogeneous_cleanup_callbacks() -> Result<()> {
+async fn defer_supports_heterogeneous_cleanup_callbacks() -> Result<(), Error> {
     // Arrange
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut app = App::new();
@@ -114,7 +115,7 @@ async fn defer_runs_after_root_failure() {
 }
 
 #[tokio::test]
-async fn defer_runs_after_shutdown() -> Result<()> {
+async fn defer_runs_after_shutdown() -> Result<(), Error> {
     // Arrange
     let cleaned_up = Arc::new(AtomicBool::new(false));
     let mut app = App::new();

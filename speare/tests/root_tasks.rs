@@ -1,4 +1,5 @@
 use speare::prelude::*;
+use speare::Error;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -6,7 +7,7 @@ use std::sync::{
 use std::time::Duration;
 
 #[tokio::test]
-async fn spawn_runs_root_task_and_join_waits_for_completion() -> Result<()> {
+async fn spawn_runs_root_task_and_join_waits_for_completion() -> Result<(), Error> {
     // Arrange
     let ran = Arc::new(AtomicBool::new(false));
     let mut app = App::builder()
@@ -32,7 +33,7 @@ async fn spawn_runs_root_task_and_join_waits_for_completion() -> Result<()> {
 }
 
 #[tokio::test]
-async fn spawn_ignores_successful_task_value() -> Result<()> {
+async fn spawn_ignores_successful_task_value() -> Result<(), Error> {
     // Arrange
     let mut app = App::new();
 
@@ -102,7 +103,7 @@ async fn root_task_retry_is_exhausted_before_join_returns_error() {
 }
 
 #[tokio::test]
-async fn app_can_spawn_and_join_again_after_successful_join() -> Result<()> {
+async fn app_can_spawn_and_join_again_after_successful_join() -> Result<(), Error> {
     // Arrange
     let runs = Arc::new(AtomicUsize::new(0));
     let mut app = App::new();
@@ -138,7 +139,7 @@ async fn app_can_spawn_and_join_again_after_successful_join() -> Result<()> {
 }
 
 #[tokio::test]
-async fn app_resets_after_failed_join_and_can_run_new_root_tasks() -> Result<()> {
+async fn app_resets_after_failed_join_and_can_run_new_root_tasks() -> Result<(), Error> {
     // Arrange
     let ran_after_failure = Arc::new(AtomicBool::new(false));
     let mut app = App::new();
@@ -166,7 +167,7 @@ async fn app_resets_after_failed_join_and_can_run_new_root_tasks() -> Result<()>
 }
 
 #[tokio::test]
-async fn shutdown_requests_app_wide_cancellation_without_waiting() -> Result<()> {
+async fn shutdown_requests_app_wide_cancellation_without_waiting() -> Result<(), Error> {
     // Arrange
     let cancelled = Arc::new(AtomicBool::new(false));
     let mut app = App::new();
@@ -193,7 +194,7 @@ async fn shutdown_requests_app_wide_cancellation_without_waiting() -> Result<()>
 }
 
 #[tokio::test]
-async fn task_spawned_after_shutdown_observes_cancellation_immediately() -> Result<()> {
+async fn task_spawned_after_shutdown_observes_cancellation_immediately() -> Result<(), Error> {
     // Arrange
     let cancelled = Arc::new(AtomicBool::new(false));
     let mut app = App::new();
