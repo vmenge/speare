@@ -126,7 +126,20 @@ impl App {
 
     /// Waits for all currently spawned root tasks to complete.
     pub async fn join(&mut self) -> Result<()> {
-        self.root.join_propagating(self.config.cancel_timeout).await
+        let result = self.root.join_propagating(self.config.cancel_timeout).await;
+        self.reset_lifecycle();
+        result
+    }
+
+    /// Requests app-wide cancellation without waiting for tasks to finish.
+    pub fn shutdown(&self) {
+        self.shutdown.cancel();
+        self.root.cancel();
+    }
+
+    fn reset_lifecycle(&mut self) {
+        self.root = TaskScope::default();
+        self.shutdown = CancellationToken::new();
     }
 
     /// Starts the app and waits for it to finish.

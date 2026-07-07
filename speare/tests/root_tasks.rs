@@ -100,3 +100,121 @@ async fn root_task_retry_is_exhausted_before_join_returns_error() {
     assert_eq!(err.to_string(), "retry failed");
     assert_eq!(attempts.load(Ordering::SeqCst), 3);
 }
+
+#[tokio::test]
+async fn app_can_spawn_and_join_again_after_successful_join() -> Result<()> {
+    // Arrange
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut app = App::new();
+
+    // Act
+    app.spawn({
+        let runs = runs.clone();
+        move || {
+            let runs = runs.clone();
+
+            async move {
+                runs.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+    app.join().await?;
+
+    app.spawn({
+        let runs = runs.clone();
+        move || {
+            let runs = runs.clone();
+
+            async move {
+                runs.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+    app.join().await?;
+
+    // Assert
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn app_resets_after_failed_join_and_can_run_new_root_tasks() -> Result<()> {
+    // Arrange
+    let ran_after_failure = Arc::new(AtomicBool::new(false));
+    let mut app = App::new();
+
+    // Act
+    app.spawn(|| async { Err::<(), _>(Error::source(std::io::Error::other("root failed"))) });
+    let err = app.join().await.unwrap_err();
+
+    app.spawn({
+        let ran_after_failure = ran_after_failure.clone();
+        move || {
+            let ran_after_failure = ran_after_failure.clone();
+
+            async move {
+                ran_after_failure.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+    app.join().await?;
+
+    // Assert
+    assert_eq!(err.to_string(), "root failed");
+    assert!(ran_after_failure.load(Ordering::SeqCst));
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_requests_app_wide_cancellation_without_waiting() -> Result<()> {
+    // Arrange
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let mut app = App::new();
+
+    app.spawn({
+        let cancelled = cancelled.clone();
+        move |scope: Scope| {
+            let cancelled = cancelled.clone();
+
+            async move {
+                scope.cancelled().await;
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+
+    // Act
+    app.shutdown();
+    app.join().await?;
+
+    // Assert
+    assert!(cancelled.load(Ordering::SeqCst));
+    Ok(())
+}
+
+#[tokio::test]
+async fn task_spawned_after_shutdown_observes_cancellation_immediately() -> Result<()> {
+    // Arrange
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let mut app = App::new();
+
+    // Act
+    app.shutdown();
+    app.spawn({
+        let cancelled = cancelled.clone();
+        move |scope: Scope| {
+            let cancelled = cancelled.clone();
+
+            async move {
+                if scope.is_cancelled() {
+                    cancelled.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+    });
+    app.join().await?;
+
+    // Assert
+    assert!(cancelled.load(Ordering::SeqCst));
+    Ok(())
+}

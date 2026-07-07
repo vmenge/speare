@@ -374,7 +374,7 @@ impl TaskScope {
         }
     }
 
-    fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         self.inner.cancellation.cancel();
 
         let children = self.inner.children.lock().expect("task scope is poisoned");
