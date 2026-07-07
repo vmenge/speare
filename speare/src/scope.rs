@@ -408,6 +408,41 @@ pub(crate) fn run_scoped(task: StoredTask, context: TaskContext) -> TaskFuture {
     run_scoped_raw(task, context)
 }
 
+pub(crate) async fn run_scoped_direct<I, T>(task: &T, context: TaskContext) -> Result<T::Output>
+where
+    T: IntoTask<I>,
+{
+    let policy = task.restart_policy();
+    let mut retries = 0;
+
+    loop {
+        let scope = context.scope().child();
+        let scoped_context = context.with_scope(scope.clone());
+        let result = task.run_task(&scoped_context).await;
+
+        let result = match result {
+            Ok(value) => scope.join().await.map(|()| value),
+            Err(error) => {
+                scope.cancel_with(context.cancel_timeout()).await;
+                Err(error)
+            }
+        };
+
+        match result {
+            Ok(value) => return Ok(value),
+            Err(_error) if policy.should_retry(retries) => {
+                retries += 1;
+
+                let delay = policy.delay(retries);
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn run_scoped_raw(task: StoredTask, context: TaskContext) -> TaskFuture {
     Box::pin(async move {
         let policy = task.policy();

@@ -135,6 +135,19 @@ impl<Input, S> IntoTask<Input> for PolicyTask<S>
 where
     S: IntoTask<Input>,
 {
+    type Output = S::Output;
+
+    fn run_task<'a>(
+        &'a self,
+        context: &'a crate::task::TaskContext,
+    ) -> impl std::future::Future<Output = crate::Result<Self::Output>> + Send + 'a {
+        self.task.run_task(context)
+    }
+
+    fn restart_policy(&self) -> RestartPolicy {
+        self.policy.restart
+    }
+
     fn into_task(self) -> StoredTask {
         self.task.into_task().with_policy(self.policy)
     }

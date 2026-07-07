@@ -203,7 +203,7 @@ async fn all_shutdown_tasks_run_even_if_one_fails() {
 
     let err = App::new()
         .add_task(Schedule::Shutdown, || async {
-            Err(Error::source(std::io::Error::other("cleanup failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("cleanup failed")))
         })
         .add_task(Schedule::Shutdown, {
             let later_ran = later_ran.clone();
@@ -230,7 +230,7 @@ async fn start_failure_still_runs_shutdown() {
 
     let err = App::new()
         .add_task(Schedule::Start, || async {
-            Err(Error::source(std::io::Error::other("start failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("start failed")))
         })
         .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
@@ -255,10 +255,10 @@ async fn start_failure_still_runs_shutdown() {
 async fn start_failure_error_wins_over_shutdown_error() {
     let err = App::new()
         .add_task(Schedule::Start, || async {
-            Err(Error::source(std::io::Error::other("start failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("start failed")))
         })
         .add_task(Schedule::Shutdown, || async {
-            Err(Error::source(std::io::Error::other("shutdown failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("shutdown failed")))
         })
         .start()
         .await
@@ -273,7 +273,7 @@ async fn task_failure_still_runs_shutdown() {
 
     let err = App::new()
         .add_task(Schedule::Work, || async {
-            Err(Error::source(std::io::Error::other("task failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("task failed")))
         })
         .add_task(Schedule::Shutdown, {
             let shutdown_ran = shutdown_ran.clone();
@@ -298,10 +298,10 @@ async fn task_failure_still_runs_shutdown() {
 async fn task_failure_error_wins_over_shutdown_error() {
     let err = App::new()
         .add_task(Schedule::Work, || async {
-            Err(Error::source(std::io::Error::other("task failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("task failed")))
         })
         .add_task(Schedule::Shutdown, || async {
-            Err(Error::source(std::io::Error::other("shutdown failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("shutdown failed")))
         })
         .start()
         .await
@@ -416,7 +416,7 @@ async fn shutdown_tasks_respect_retry() -> Result<()> {
                     let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
 
                     if attempt == 0 {
-                        Err(Error::source(std::io::Error::other("retry shutdown")))
+                        Err::<(), _>(Error::source(std::io::Error::other("retry shutdown")))
                     } else {
                         Ok(())
                     }

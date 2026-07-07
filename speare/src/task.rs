@@ -1,7 +1,7 @@
 use crate::{
     error::{IntoTaskResult, Result},
     resource::Resources,
-    retry::TaskPolicy,
+    retry::{RestartPolicy, TaskPolicy},
     scope::TaskScope,
 };
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
@@ -92,6 +92,17 @@ pub trait TaskParam {
 }
 
 pub trait IntoTask<Input> {
+    type Output;
+
+    fn run_task<'a>(
+        &'a self,
+        context: &'a TaskContext,
+    ) -> impl Future<Output = Result<Self::Output>> + Send + 'a;
+
+    fn restart_policy(&self) -> RestartPolicy {
+        RestartPolicy::default()
+    }
+
     fn into_task(self) -> StoredTask;
 }
 
@@ -106,6 +117,21 @@ macro_rules! impl_task {
             Fut::Output: IntoTaskResult,
             $($params: TaskParam + 'static,)*
         {
+            type Output = <Fut::Output as IntoTaskResult>::Output;
+
+            fn run_task<'a>(
+                &'a self,
+                context: &'a TaskContext,
+            ) -> impl Future<Output = Result<Self::Output>> + Send + 'a {
+                async move {
+                    $(
+                    let $params = $params::extract(context)?;
+                    )*
+
+                    self($($params),*).await.into_task_result()
+                }
+            }
+
             fn into_task(self) -> StoredTask {
                 StoredTask::new(Arc::new(move |context| {
                     $(
@@ -119,7 +145,7 @@ macro_rules! impl_task {
                     )*
 
                     let future = self($($params),*);
-                    Box::pin(async move { future.await.into_task_result() })
+                    Box::pin(async move { future.await.into_task_result().map(|_| ()) })
                 }))
             }
         }

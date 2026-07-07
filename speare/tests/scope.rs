@@ -158,7 +158,7 @@ async fn parent_failure_cancels_child_before_abort() {
                     }
                 });
 
-                Err(Error::source(std::io::Error::other("parent failed")))
+                Err::<(), _>(Error::source(std::io::Error::other("parent failed")))
             }
         })
         .start()
@@ -210,7 +210,9 @@ async fn cancellation_cascades_to_nested_children() -> Result<()> {
 async fn child_failure_does_not_fail_parent_scope() -> Result<()> {
     App::new()
         .add_task(Schedule::Start, |scope: Scope| async move {
-            scope.spawn(|| async { Err(Error::source(std::io::Error::other("child failed"))) });
+            scope.spawn(|| async {
+                Err::<(), _>(Error::source(std::io::Error::other("child failed")))
+            });
         })
         .start()
         .await?;
@@ -229,7 +231,9 @@ async fn child_handle_can_watch_its_failure() -> Result<()> {
 
             async move {
                 let child = scope
-                    .spawn(|| async { Err(Error::source(std::io::Error::other("child failed"))) });
+                    .spawn(|| async {
+                        Err::<(), _>(Error::source(std::io::Error::other("child failed")))
+                    });
 
                 let error = child.failed().await;
                 assert_eq!(error.to_string(), "child failed");
@@ -253,7 +257,9 @@ async fn scope_can_watch_next_child_failure() -> Result<()> {
             let scope_failure_seen = scope_failure_seen.clone();
 
             async move {
-                scope.spawn(|| async { Err(Error::source(std::io::Error::other("child failed"))) });
+                scope.spawn(|| async {
+                    Err::<(), _>(Error::source(std::io::Error::other("child failed")))
+                });
 
                 let ChildFailure { error, .. } = scope.next_failure().await;
                 assert_eq!(error.to_string(), "child failed");
@@ -271,10 +277,12 @@ async fn scope_can_watch_next_child_failure() -> Result<()> {
 async fn parent_can_explicitly_fail_from_child_failure() {
     let err = App::new()
         .add_task(Schedule::Start, |scope: Scope| async move {
-            scope.spawn(|| async { Err(Error::source(std::io::Error::other("child failed"))) });
+            scope.spawn(|| async {
+                Err::<(), _>(Error::source(std::io::Error::other("child failed")))
+            });
 
             let failure = scope.next_failure().await;
-            Err(failure.error)
+            Err::<(), _>(failure.error)
         })
         .start()
         .await
@@ -319,7 +327,7 @@ async fn parent_failure_aborts_spawned_children() {
 
                 wait_started.notified().await;
                 child.abort();
-                Err(Error::source(std::io::Error::other("parent failed")))
+                Err::<(), _>(Error::source(std::io::Error::other("parent failed")))
             }
         })
         .start()
@@ -358,7 +366,7 @@ async fn retry_respawns_children() -> Result<()> {
 
                     let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
                     if attempt == 0 {
-                        Err(Error::source(std::io::Error::other("retry")))
+                        Err::<(), _>(Error::source(std::io::Error::other("retry")))
                     } else {
                         Ok(())
                     }

@@ -68,7 +68,7 @@ async fn spawn_join_returns_task_error() {
     // Arrange / Act
     let err = App::new()
         .add_task(Schedule::Start, || async {
-            Err(Error::source(std::io::Error::other("failed")))
+            Err::<(), _>(Error::source(std::io::Error::other("failed")))
         })
         .spawn()
         .join()

@@ -9,6 +9,7 @@ pub enum Error {
     MissingResource { type_name: &'static str },
     ResourceTypeMismatch { type_name: &'static str },
     Source { source: ArcError },
+    Report { message: String },
 }
 
 impl Error {
@@ -18,6 +19,15 @@ impl Error {
     {
         Self::Source {
             source: Arc::new(error),
+        }
+    }
+
+    pub fn report<E>(error: E) -> Self
+    where
+        E: fmt::Display + fmt::Debug + Send + Sync + 'static,
+    {
+        Self::Report {
+            message: error.to_string(),
         }
     }
 
@@ -40,32 +50,33 @@ impl fmt::Display for Error {
                 write!(f, "{type_name} resource had an unexpected type")
             }
             Self::Source { source } => source.fmt(f),
+            Self::Report { message } => f.write_str(message),
         }
     }
 }
 
 pub trait IntoTaskResult {
-    fn into_task_result(self) -> Result<()>;
+    type Output;
+
+    fn into_task_result(self) -> Result<Self::Output>;
 }
 
 impl IntoTaskResult for () {
-    fn into_task_result(self) -> Result<()> {
+    type Output = ();
+
+    fn into_task_result(self) -> Result<Self::Output> {
         Ok(())
     }
 }
 
-impl IntoTaskResult for Result<()> {
-    fn into_task_result(self) -> Result<()> {
-        self
-    }
-}
-
-impl<E> IntoTaskResult for std::result::Result<(), E>
+impl<T, E> IntoTaskResult for std::result::Result<T, E>
 where
-    E: error::Error + Send + Sync + 'static,
+    E: fmt::Display + fmt::Debug + Send + Sync + 'static,
 {
-    fn into_task_result(self) -> Result<()> {
-        self.map_err(Error::source)
+    type Output = T;
+
+    fn into_task_result(self) -> Result<Self::Output> {
+        self.map_err(Error::report)
     }
 }
 

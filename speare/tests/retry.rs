@@ -27,7 +27,7 @@ async fn never_retries_failed_task() {
 
                 async move {
                     task_attempts.fetch_add(1, Ordering::SeqCst);
-                    Err(Error::source(std::io::Error::other("failed")))
+                    Err::<(), _>(Error::source(std::io::Error::other("failed")))
                 }
             })
             .retry(Retry::Never),
@@ -54,7 +54,7 @@ async fn max_retries_failed_task() {
 
                 async move {
                     task_attempts.fetch_add(1, Ordering::SeqCst);
-                    Err(Error::source(std::io::Error::other("failed")))
+                    Err::<(), _>(Error::source(std::io::Error::other("failed")))
                 }
             })
             .retry(Retry::Max(2)),
@@ -83,7 +83,7 @@ async fn always_retries_until_success() -> Result<()> {
                     let attempt = task_attempts.fetch_add(1, Ordering::SeqCst);
 
                     if attempt < 2 {
-                        Err(Error::source(std::io::Error::other("failed")))
+                        Err::<(), _>(Error::source(std::io::Error::other("failed")))
                     } else {
                         Ok(())
                     }

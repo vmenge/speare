@@ -1,7 +1,7 @@
 use crate::{
     error::{Error, Result},
     resource::{Res, Resources},
-    scope::{TaskScope, run_scoped},
+    scope::{TaskScope, run_scoped, run_scoped_direct},
     task::{IntoTask, StoredTask, TaskContext},
 };
 use std::{collections::HashMap, mem, time::Duration};
@@ -124,13 +124,16 @@ impl App {
     ///
     /// This does not add the task to a schedule and does not run any
     /// scheduled tasks. It is useful for tests and one-off task execution.
-    pub async fn run<I>(&self, task: impl IntoTask<I>) -> Result<()> {
+    pub async fn run<I, T>(&self, task: T) -> Result<T::Output>
+    where
+        T: IntoTask<I>,
+    {
         let context = TaskContext::root(
             self.resources.clone(),
             self.config.cancel_timeout,
             CancellationToken::new(),
         );
-        run_scoped(task.into_task(), context).await
+        run_scoped_direct(&task, context).await
     }
 
     fn runtime(&self) -> Runtime {
