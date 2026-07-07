@@ -1,7 +1,12 @@
 [workspace]
 members = ["speare"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
-rust-version = "1.82.0"
+rust-version = "1.95.0"
 
+[workspace.dependencies]
+flume = "0.12"
+tokio = { version = "1.52.3" }
+tokio-util = "0.7"
+derive_more = { version = "1.0.0" }

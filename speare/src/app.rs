@@ -53,7 +53,7 @@ pub enum Schedule {
     /// Runs after `Start` and before `Shutdown`.
     ///
     /// Systems in this schedule are spawned concurrently and awaited together.
-    Task,
+    Work,
     /// Runs when the app is exiting.
     ///
     /// Shutdown systems run after normal completion, after shutdown is
@@ -93,7 +93,7 @@ impl App {
 
     /// Starts the app and waits for it to finish.
     ///
-    /// This runs the `Start` schedule, then the `Task` schedule, then the
+    /// This runs the `Start` schedule, then the `Work` schedule, then the
     /// `Shutdown` schedule. Like `spawn`, it executes a snapshot of the app's
     /// systems and resources.
     pub async fn start(&self) -> Result<()> {
@@ -123,7 +123,7 @@ impl App {
 
     /// Adds a system to one of the app schedules.
     ///
-    /// Systems in `Start` and `Shutdown` run sequentially. Systems in `Task`
+    /// Systems in `Start` and `Shutdown` run sequentially. Systems in `Work`
     /// are spawned concurrently and awaited before shutdown begins.
     pub fn add_system<I>(&mut self, schedule: Schedule, system: impl IntoSystem<I>) -> &mut Self {
         self.systems
@@ -311,7 +311,7 @@ impl Runtime {
     }
 
     async fn run_tasks(&self, shutdown: CancellationToken) -> Result<()> {
-        if let Some(systems) = self.systems.get(&Schedule::Task) {
+        if let Some(systems) = self.systems.get(&Schedule::Work) {
             let root = TaskScope::default();
             let context = SystemContext::root(
                 self.resources.clone(),
