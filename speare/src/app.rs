@@ -6,7 +6,7 @@ use crate::{
     scope::{TaskScope, run_scoped},
     task::{IntoTask, StoredTask, TaskContext},
 };
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, mem, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 /// An application composed from resources and scheduled tasks.
@@ -15,6 +15,13 @@ use tokio_util::sync::CancellationToken;
 /// executes tasks against a cloned snapshot of the app's current resources and
 /// tasks.
 pub struct App {
+    tasks: HashMap<Schedule, Vec<StoredTask>>,
+    resources: Resources,
+    config: AppConfig,
+}
+
+/// Builds an app by collecting setup-time resources, config, and plugins.
+pub struct AppBuilder {
     tasks: HashMap<Schedule, Vec<StoredTask>>,
     resources: Resources,
     config: AppConfig,
@@ -39,6 +46,20 @@ impl Default for AppConfig {
 /// to cancel the background task.
 pub struct AppHandle {
     task: tokio::task::JoinHandle<Result<()>>,
+}
+
+/// Adds setup-time behavior to an app builder.
+pub trait Plugin {
+    fn setup(&self, _builder: &mut AppBuilder) {}
+}
+
+impl<T> Plugin for &T
+where
+    T: Plugin + ?Sized,
+{
+    fn setup(&self, builder: &mut AppBuilder) {
+        (*self).setup(builder);
+    }
 }
 
 /// A named phase in the app lifecycle.
@@ -66,11 +87,12 @@ impl App {
     #[allow(clippy::new_without_default)]
     /// Creates an empty app.
     pub fn new() -> Self {
-        Self {
-            tasks: HashMap::new(),
-            resources: Resources::default(),
-            config: AppConfig::default(),
-        }
+        Self::builder().build()
+    }
+
+    /// Creates a builder for configuring an app before runtime.
+    pub fn builder() -> AppBuilder {
+        AppBuilder::new()
     }
 
     /// Sets how long parent failure waits for child cancellation before aborting children.
@@ -244,6 +266,58 @@ impl App {
     }
 }
 
+impl AppBuilder {
+    #[allow(clippy::new_without_default)]
+    /// Creates an empty app builder.
+    pub fn new() -> Self {
+        Self {
+            tasks: HashMap::new(),
+            resources: Resources::default(),
+            config: AppConfig::default(),
+        }
+    }
+
+    /// Builds an app from the current builder state.
+    ///
+    /// The builder is drained, so calling `build` again creates an empty app.
+    pub fn build(&mut self) -> App {
+        App {
+            tasks: mem::take(&mut self.tasks),
+            resources: mem::take(&mut self.resources),
+            config: mem::take(&mut self.config),
+        }
+    }
+
+    /// Runs a plugin's setup against this builder.
+    pub fn add_plugin<P>(&mut self, plugin: P) -> &mut Self
+    where
+        P: Plugin,
+    {
+        plugin.setup(self);
+        self
+    }
+
+    /// Sets how long parent failure waits for child cancellation before aborting children.
+    pub fn cancel_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.config.cancel_timeout = timeout;
+        self
+    }
+
+    /// Inserts or replaces a resource in the app being built.
+    pub fn override_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
+        self.resources.override_with(res);
+        self
+    }
+
+    /// Inserts a resource into the app being built.
+    ///
+    /// Panics if a resource of the same type has already been inserted.
+    pub fn insert_resource<R: Send + Sync + 'static>(&mut self, res: R) -> &mut Self {
+        self.resources.insert(res);
+        self
+    }
+}
+
 impl AppHandle {
     /// Waits for the app task to finish.
     ///
@@ -372,6 +446,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "i32 is already registered")]
     fn add_resource_panics_when_resource_type_is_registered_twice() {
-        App::new().insert_resource(5i32).insert_resource(9i32);
+        App::builder()
+            .insert_resource(5i32)
+            .insert_resource(9i32);
     }
 }
