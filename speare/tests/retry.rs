@@ -32,8 +32,7 @@ async fn never_retries_failed_task() {
             })
             .retry(Retry::Never),
         )
-        .spawn()
-        .join()
+        .start()
         .await
         .unwrap_err();
 
@@ -59,8 +58,7 @@ async fn max_retries_failed_task() {
             })
             .retry(Retry::Max(2)),
         )
-        .spawn()
-        .join()
+        .start()
         .await
         .unwrap_err();
 
@@ -91,8 +89,7 @@ async fn always_retries_until_success() -> Result<()> {
             })
             .retry(Retry::Always),
         )
-        .spawn()
-        .join()
+        .start()
         .await?;
 
     assert_eq!(attempts.load(Ordering::SeqCst), 3);

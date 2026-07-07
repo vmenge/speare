@@ -255,6 +255,61 @@ impl TaskScope {
         self.spawn_with(task, context, true)
     }
 
+    pub(crate) fn spawn_direct<I, T>(&self, task: T, context: TaskContext) -> Child
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+    {
+        let id = ChildId(self.inner.next_id.fetch_add(1, Ordering::SeqCst));
+        let child_scope = self.child();
+        let state = Arc::new(ChildState::default());
+        let child_state = state.clone();
+        let failures = self.inner.failures.clone();
+        let cancellation = child_scope.inner.cancellation.clone();
+        let child_context = context.with_scope(child_scope);
+
+        let abort = self
+            .inner
+            .tasks
+            .lock()
+            .expect("task scope is poisoned")
+            .as_mut()
+            .expect("task scope is already joining")
+            .spawn(async move {
+                let result = run_scoped_direct(&task, child_context).await.map(|_| ());
+
+                if let Err(error) = &result {
+                    let failure = ChildFailure {
+                        child_id: id,
+                        error: error.clone(),
+                    };
+
+                    let _ = failures.send(failure);
+                }
+
+                child_state.set_result(result.clone());
+                ChildFinished {
+                    result,
+                    propagates_failure: true,
+                }
+            });
+
+        let child = Child {
+            id,
+            abort,
+            cancellation,
+            state,
+        };
+
+        self.inner
+            .children
+            .lock()
+            .expect("task scope is poisoned")
+            .push(child.clone());
+
+        child
+    }
+
     fn spawn_with(
         &self,
         task: StoredTask,
@@ -394,6 +449,38 @@ impl TaskScope {
                 Ok(ChildFinished { .. }) => {}
                 Err(error) if error.is_cancelled() => {}
                 Err(error) => {
+                    tasks.abort_all();
+                    return Err(Error::source(error));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn join_propagating(&self, cancel_timeout: Duration) -> Result<()> {
+        let mut tasks = self
+            .inner
+            .tasks
+            .lock()
+            .expect("task scope is poisoned")
+            .take()
+            .expect("task scope is already joining");
+
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(ChildFinished {
+                    result: Err(error),
+                    propagates_failure: true,
+                }) => {
+                    self.cancel_with(cancel_timeout).await;
+                    tasks.abort_all();
+                    return Err(error);
+                }
+                Ok(ChildFinished { .. }) => {}
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => {
+                    self.cancel_with(cancel_timeout).await;
                     tasks.abort_all();
                     return Err(Error::source(error));
                 }

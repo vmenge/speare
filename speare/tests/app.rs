@@ -66,14 +66,12 @@ fn builder_add_plugin_runs_setup_before_build() -> Result<()> {
 #[tokio::test]
 async fn spawn_join_returns_task_error() {
     // Arrange / Act
-    let err = App::new()
-        .add_task(Schedule::Start, || async {
-            Err::<(), _>(Error::source(std::io::Error::other("failed")))
-        })
-        .spawn()
-        .join()
-        .await
-        .unwrap_err();
+    let mut app = App::new();
+    app.spawn(|| async {
+        Err::<(), _>(Error::source(std::io::Error::other("failed")))
+    });
+
+    let err = app.join().await.unwrap_err();
 
     // Assert
     assert_eq!(err.to_string(), "failed");
@@ -82,15 +80,15 @@ async fn spawn_join_returns_task_error() {
 #[tokio::test]
 async fn app_can_be_accessed_after_spawn() -> Result<()> {
     // Arrange
-    let app = App::builder().insert_resource(5i32).build();
+    let mut app = App::builder().insert_resource(5i32).build();
 
     // Act
-    let handle = app.spawn();
+    app.spawn(|| async {});
     let value = app.get::<i32>()?;
 
     // Assert
     assert_eq!(*value, 5);
-    handle.join().await
+    app.join().await
 }
 
 #[tokio::test]

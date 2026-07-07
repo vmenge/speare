@@ -16,6 +16,8 @@ pub struct App {
     tasks: HashMap<Schedule, Vec<StoredTask>>,
     resources: Resources,
     config: AppConfig,
+    root: TaskScope,
+    shutdown: CancellationToken,
 }
 
 /// Builds an app by collecting setup-time resources, config, and plugins.
@@ -102,13 +104,29 @@ impl App {
         self
     }
 
-    /// Starts the app in a background Tokio task.
+    /// Spawns a root task into this app's root task scope.
     ///
-    /// The spawned app uses a snapshot of the app's tasks and resources at
-    /// the time `spawn` is called. Changes made to the `App` after spawning do
-    /// not affect the running task.
-    pub fn spawn(&self) -> AppHandle {
-        self.runtime().spawn()
+    /// Successful task values are ignored. Root task failures propagate to
+    /// `join` after retry policy is exhausted.
+    pub fn spawn<I, T>(&mut self, task: T) -> &mut Self
+    where
+        T: IntoTask<I> + Send + Sync + 'static,
+        T::Output: Send + 'static,
+    {
+        let context = TaskContext::root(
+            self.resources.clone(),
+            self.config.cancel_timeout,
+            self.shutdown.clone(),
+        )
+        .with_scope(self.root.clone());
+
+        self.root.spawn_direct(task, context);
+        self
+    }
+
+    /// Waits for all currently spawned root tasks to complete.
+    pub async fn join(&mut self) -> Result<()> {
+        self.root.join_propagating(self.config.cancel_timeout).await
     }
 
     /// Starts the app and waits for it to finish.
@@ -207,6 +225,8 @@ impl AppBuilder {
             tasks: mem::take(&mut self.tasks),
             resources: mem::take(&mut self.resources),
             config: mem::take(&mut self.config),
+            root: TaskScope::default(),
+            shutdown: CancellationToken::new(),
         }
     }
 
